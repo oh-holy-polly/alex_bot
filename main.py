@@ -1,17 +1,23 @@
 """
 main.py — точка входа, все Telegram handlers
+
+ИЗМЕНЕНИЯ v2:
+- Умный детектор намерений через LLM (вместо жёсткого keyword matching)
+- Намерения: task_start / task_done / task_stuck / no_ping / add_habit /
+             habit_done / new_pattern / save_archive / suggest_event /
+             new_idea / chat
+- Детектор вызывает быструю 8b модель, возвращает JSON
 """
 
 import logging
+import json
 import re
 from datetime import datetime
-
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler
 )
-
 from config import TELEGRAM_TOKEN, USER_TELEGRAM_ID, TIMEZONE
 from cache import (
     init_db, get_night_mode, set_night_mode,
@@ -30,21 +36,85 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # ───────────────────────────────────────────
 # GUARDS
 # ───────────────────────────────────────────
 
 def is_polina(update: Update) -> bool:
-    """Бот работает только для Полины"""
     return update.effective_user.id == USER_TELEGRAM_ID
 
-
 def is_night() -> bool:
-    """Ночной режим — после 00:00 и до 06:00"""
     hour = datetime.now(TIMEZONE).hour
     return 0 <= hour < 6
 
+# ───────────────────────────────────────────
+# УМНЫЙ ДЕТЕКТОР НАМЕРЕНИЙ
+# ───────────────────────────────────────────
+
+INTENT_SYSTEM_PROMPT = """Ты — классификатор намерений. Определяешь что имеет в виду Полина.
+
+Верни ТОЛЬКО валидный JSON без пояснений и markdown:
+{"intent": "<intent>", "confidence": <0.0-1.0>}
+
+Возможные intent:
+- task_start     — начинает задачу / говорит что будет делать / собирается за что-то взяться
+- task_done      — говорит что закончила, сделала, готово, выполнила
+- task_stuck     — застряла, затупила, не может начать, завислa
+- no_ping        — просит не беспокоить, не пинговать, оставить в покое
+- add_habit      — хочет добавить привычку
+- habit_done     — отмечает что сделала привычку
+- new_pattern    — замечает паттерн поведения / триггер
+- save_archive   — просит сохранить/запомнить что-то
+- suggest_event  — скучно, куда пойти, что делать
+- new_idea       — пришла с новой идеей / планом / бизнес-идеей
+- chat           — просто разговаривает, всё остальное
+
+Примеры:
+"надо прошерстить файлы" → task_start
+"буду делать отчёт" → task_start
+"хочу разобрать почту" → task_start
+"всё, сделала" → task_done
+"застряла на введении" → task_stuck
+"не мешай мне" → no_ping
+"начну делать зарядку каждый день" → add_habit
+"сделала зарядку" → habit_done
+"я всегда откладываю когда устала" → new_pattern
+"запомни это упражнение" → save_archive
+"скучно" → suggest_event
+"придумала новый проект" → new_idea
+"как дела?" → chat
+"""
+
+def detect_intent(message: str) -> dict:
+    """
+    Вызывает быструю 8b модель чтобы понять намерение Полины.
+    Возвращает {"intent": str, "confidence": float}
+    """
+    try:
+        from groq import Groq
+        from config import GROQ_API_KEY, MODEL_FAST
+
+        client = Groq(api_key=GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model=MODEL_FAST,
+            messages=[
+                {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": message}
+            ],
+            temperature=0.1,
+            max_tokens=60
+        )
+        raw = response.choices[0].message.content.strip()
+
+        # Чистим на случай если модель всё же добавила markdown
+        raw = re.sub(r"```json|```", "", raw).strip()
+        result = json.loads(raw)
+        logger.info(f"Intent: {result} | Message: {message[:50]}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Intent detection error: {e}")
+        return {"intent": "chat", "confidence": 0.5}
 
 # ───────────────────────────────────────────
 # КОМАНДЫ
@@ -59,18 +129,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reply)
 
-
 async def cmd_awake(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Полина проснулась — запускаем утренний ритуал"""
     if not is_polina(update):
         return
     set_night_mode(False)
     from morning import handle_awake
     await handle_awake(update, context)
 
-
 async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/mood 7 — быстро залогировать настроение"""
     if not is_polina(update):
         return
     args = context.args
@@ -90,7 +156,6 @@ async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reply)
 
-
 async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
@@ -104,7 +169,6 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         force_smart=False
     )
     await update.message.reply_text(reply)
-
 
 async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
@@ -122,9 +186,7 @@ async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"Ещё не сделано: {', '.join(pending)}"
     await update.message.reply_text(text.strip())
 
-
 async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/task — показать текущую активную задачу"""
     if not is_polina(update):
         return
     task = get_active_task()
@@ -138,9 +200,7 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reply)
 
-
 async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/briefing — запросить утренний брифинг вручную"""
     if not is_polina(update):
         return
     await update.message.reply_text("Сейчас посмотрю что у нас на сегодня...")
@@ -153,9 +213,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(reply)
 
-
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/done — задача выполнена"""
     if not is_polina(update):
         return
     task = get_active_task()
@@ -169,7 +227,6 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         force_smart=False
     )
     await update.message.reply_text(reply)
-
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
@@ -187,7 +244,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text)
 
-
 # ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
 # ───────────────────────────────────────────
@@ -197,7 +253,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_message = update.message.text
-    hour = datetime.now(TIMEZONE).hour
 
     # ── Утренние состояния (сны, настроение) ──
     from morning import handle_morning_text
@@ -213,7 +268,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_night():
         if not get_night_mode():
             set_night_mode(True)
-        # После полуночи Алекс отвечает скучно или молчит
         night_reply = ask_alex(
             user_message,
             force_smart=False,
@@ -226,16 +280,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(night_reply)
         return
 
-    # ── Детектор намерений ──
-    msg_lower = user_message.lower()
+    # ── Умный детектор намерений ──
+    detected = detect_intent(user_message)
+    intent = detected.get("intent", "chat")
+    confidence = detected.get("confidence", 0.5)
 
-    # Полина говорит что начинает задачу
-    if any(w in msg_lower for w in ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
-        await _handle_task_start(update, user_message)
-        return
+    logger.info(f"Detected intent: {intent} (conf={confidence})")
 
-    # Полина говорит что задача готова
-    if any(w in msg_lower for w in ["готово", "сделала", "закончила", "выполнила", "done"]):
+    # Низкая уверенность → просто чат
+    if confidence < 0.6:
+        intent = "chat"
+
+    # ── Роутинг по намерению ──
+
+    if intent == "task_start":
+        from day import start_task_cycle
+        await start_task_cycle(update, user_message)
+
+    elif intent == "task_done":
         task = get_active_task()
         if task:
             set_active_task(None)
@@ -244,88 +306,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 force_smart=False
             )
             await update.message.reply_text(reply)
-            return
+        else:
+            # Нет активной задачи — просто отреагируй
+            reply = ask_alex(user_message)
+            await update.message.reply_text(reply)
 
-    # Полина говорит что затупила / не начала
-    if any(w in msg_lower for w in ["затупила", "застряла", "не начала", "не могу", "завис"]):
-        task = get_active_task()
-        task_info = f"Активная задача: {task.get('name')}" if task else "Активной задачи нет"
-        reply = ask_alex(
-            f"Полина говорит: «{user_message}». {task_info}. "
-            f"Помоги разобраться — спроси где именно застряла, не паникуй.",
-            force_smart=True
-        )
-        await update.message.reply_text(reply)
-        return
+    elif intent == "task_stuck":
+        from day import handle_task_stuck
+        await handle_task_stuck(update, user_message)
 
-    # Полина хочет добавить привычку
-    if any(w in msg_lower for w in ["добавь привычку", "новая привычка", "буду делать", "начну делать"]):
+    elif intent == "no_ping":
+        from day import handle_no_ping_request
+        await handle_no_ping_request(update, user_message)
+
+    elif intent == "add_habit":
         from habits import handle_add_habit_confirmed
         await handle_add_habit_confirmed(update, user_message)
-        return
 
-    # Полина выполнила привычку
-    if any(w in msg_lower for w in ["сделала привычку", "выполнила привычку", "отметь привычку", "сделала:", "выполнила:"]):
+    elif intent == "habit_done":
         from habits import handle_habit_done
         await handle_habit_done(update, user_message)
-        return
 
-    # Полина заметила паттерн
-    if any(w in msg_lower for w in ["заметила паттерн", "новый паттерн", "мой паттерн", "триггер"]):
+    elif intent == "new_pattern":
         from habits import handle_new_pattern
         await handle_new_pattern(update, user_message)
-        return
 
-    # Полина делится заданием / упражнением для архива
-    if any(w in msg_lower for w in ["сохрани", "запомни это", "добавь в архив", "классное задание"]):
+    elif intent == "save_archive":
         await _handle_save_to_archive(update, user_message)
-        return
 
-    # Полина хочет куда-то пойти / скучно
-    if any(w in msg_lower for w in ["куда пойти", "что делать вечером", "скучно", "хочу выйти"]):
+    elif intent == "suggest_event":
         from day import suggest_event
         await suggest_event(update, context)
-        return
 
-    # Обычный разговор
-    reply = ask_alex(user_message)
-    await update.message.reply_text(reply)
+    elif intent == "new_idea":
+        from day import handle_new_idea
+        await handle_new_idea(update, user_message)
 
+    else:
+        # chat — обычный разговор
+        reply = ask_alex(user_message)
+        await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
 # ───────────────────────────────────────────
 
-async def _handle_task_start(update: Update, user_message: str):
-    """Полина начинает задачу — запускаем цикл коучинга"""
-    reply = ask_alex(
-        f"Полина говорит: «{user_message}». "
-        f"Она начинает задачу. Зафиксируй это, оцени примерно сколько времени займёт "
-        f"на основе контекста, скажи когда заглянешь проверить. "
-        f"Коротко и по-человечески.",
-        force_smart=True
-    )
-    # Извлекаем название задачи простым способом — сохраняем сообщение
-    set_active_task({
-        "name": user_message,
-        "started_at": datetime.now(TIMEZONE).strftime("%H:%M")
-    })
-    await update.message.reply_text(reply)
-
-
-async def _handle_add_habit(update: Update, user_message: str):
-    """Добавляем привычку через диалог"""
-    reply = ask_alex(
-        f"Полина хочет добавить привычку: «{user_message}». "
-        f"Уточни название, частоту и уровень энергии — коротко, "
-        f"одним вопросом. Потом я добавлю в Notion.",
-        force_smart=False
-    )
-    await update.message.reply_text(reply)
-
-
 async def _handle_save_to_archive(update: Update, user_message: str):
-    """Сохраняем задание в архив"""
     notion.add_to_archive(
         title="Задание из чата",
         content=user_message,
@@ -338,14 +364,11 @@ async def _handle_save_to_archive(update: Update, user_message: str):
     )
     await update.message.reply_text(reply)
 
-
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка фото — для утреннего фото-контроля"""
     if not is_polina(update):
         return
     from morning import handle_morning_photo
     await handle_morning_photo(update, context)
-
 
 # ───────────────────────────────────────────
 # ЗАПУСК
@@ -353,19 +376,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     init_db()
-
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Команды
-    app.add_handler(CommandHandler("start",    cmd_start))
-    app.add_handler(CommandHandler("awake",    cmd_awake))
-    app.add_handler(CommandHandler("mood",     cmd_mood))
-    app.add_handler(CommandHandler("goals",    cmd_goals))
-    app.add_handler(CommandHandler("habits",   cmd_habits))
-    app.add_handler(CommandHandler("task",     cmd_task))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("awake", cmd_awake))
+    app.add_handler(CommandHandler("mood", cmd_mood))
+    app.add_handler(CommandHandler("goals", cmd_goals))
+    app.add_handler(CommandHandler("habits", cmd_habits))
+    app.add_handler(CommandHandler("task", cmd_task))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
-    app.add_handler(CommandHandler("done",     cmd_done))
-    app.add_handler(CommandHandler("help",     cmd_help))
+    app.add_handler(CommandHandler("done", cmd_done))
+    app.add_handler(CommandHandler("help", cmd_help))
 
     # Фото
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
@@ -379,7 +401,6 @@ def main():
 
     logger.info("Алекс запущен 🔥")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
