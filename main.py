@@ -254,10 +254,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Защита от дублей (если Телеграм перепосылает сообщение из-за таймаута)
     msg_id = update.message.message_id
-    if context.user_data.get("last_msg_id") == msg_id:
+    now_ts = datetime.now().timestamp()
+    
+    if "processed_msgs" not in context.user_data:
+        context.user_data["processed_msgs"] = {}
+    
+    # Проверяем, не обрабатывали ли мы это сообщение в последние 60 секунд
+    if msg_id in context.user_data["processed_msgs"]:
         logger.warning(f"Duplicate message detected: {msg_id}, skipping.")
         return
-    context.user_data["last_msg_id"] = msg_id
+    
+    # Очищаем старые ID (старше 5 минут)
+    context.user_data["processed_msgs"] = {
+        m_id: ts for m_id, ts in context.user_data["processed_msgs"].items() 
+        if now_ts - ts < 300
+    }
+    context.user_data["processed_msgs"][msg_id] = now_ts
 
     user_message = update.message.text
 
