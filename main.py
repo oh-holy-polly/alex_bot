@@ -252,6 +252,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
 
+    # Защита от дублей (если Телеграм перепосылает сообщение из-за таймаута)
+    msg_id = update.message.message_id
+    if context.user_data.get("last_msg_id") == msg_id:
+        logger.warning(f"Duplicate message detected: {msg_id}, skipping.")
+        return
+    context.user_data["last_msg_id"] = msg_id
+
     user_message = update.message.text
 
     # ── Утренние состояния (сны, настроение) ──
@@ -272,9 +279,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_message,
             force_smart=False,
             extra_instruction=(
-                "Сейчас ночь, после полуночи. Ты ночной вышибала. "
-                "Отвечай максимально скучно и коротко, намекай что пора спать. "
-                "Не развлекай, не поддерживай разговор."
+                "Сейчас глубокая ночь. Ты сонный и ворчливый Алекс. "
+                "Отвечай максимально коротко (одно предложение), намекай что пора спать. "
+                "Не поддерживай длинные дискуссии. Ты говоришь напрямую с Полиной."
             )
         )
         await update.message.reply_text(night_reply)

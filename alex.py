@@ -76,51 +76,51 @@ def build_context() -> str:
     """
     now = datetime.now(TIMEZONE)
     lines = [
-        f"\n=== КОНТЕКСТ ПРЯМО СЕЙЧАС ===",
-        f"Время: {now.strftime('%A, %d.%m.%Y %H:%M')}",
-        f"Режим дня: {get_day_mode()}",
+        f"\n=== ТВОЙ КОНТЕКСТ (ТЫ ГОВОРИШЬ С ПОЛИНОЙ) ===",
+        f"Текущее время: {now.strftime('%A, %d.%m.%Y %H:%M')}",
+        f"Режим дня Полины: {get_day_mode()}",
     ]
 
     # Настроение
     mood_data = get_cache("recent_mood")
     if mood_data:
         latest = mood_data[0] if isinstance(mood_data, list) else mood_data
-        lines.append(f"Последнее настроение: {latest.get('score', '?')}/10 — {latest.get('phase', '?')}")
+        lines.append(f"Её последнее настроение: {latest.get('score', '?')}/10 — {latest.get('phase', '?')}")
 
     # Фаза цикла
     cycle = get_cache("cycle_phase")
     if cycle:
-        lines.append(f"Фаза цикла: {cycle.get('phase', '?')}, день {cycle.get('day', '?')}")
+        lines.append(f"Её фаза цикла: {cycle.get('phase', '?')}, день {cycle.get('day', '?')}")
 
     # Активная задача
     active_task = get_active_task()
     if active_task:
-        lines.append(f"Активная задача: {active_task.get('name', '?')} (начата в {active_task.get('started_at', '?')})")
+        lines.append(f"Она сейчас делает: {active_task.get('name', '?')} (начала в {active_task.get('started_at', '?')})")
 
     # События сегодня
     events = get_cache("today_events")
     if events:
         events_str = ", ".join(e.get("name", "") for e in events[:3])
-        lines.append(f"События сегодня: {events_str}")
+        lines.append(f"У неё сегодня в планах: {events_str}")
 
     # Цели
     goals = get_cache("active_goals")
     if goals:
         goals_str = ", ".join(g.get("name", "") for g in goals[:3])
-        lines.append(f"Активные цели: {goals_str}")
+        lines.append(f"Её цели: {goals_str}")
 
     # Привычки
     habits = get_cache("habits")
     if habits:
         pending = [h.get("name", "") for h in habits if not h.get("done_today")]
         if pending:
-            lines.append(f"Привычки не выполнены: {', '.join(pending[:3])}")
+            lines.append(f"Она ещё не сделала сегодня: {', '.join(pending[:3])}")
 
     # Паттерны
     patterns = get_cache("patterns")
     if patterns:
         patterns_str = "; ".join(p.get("name", "") for p in patterns[:2])
-        lines.append(f"Известные паттерны: {patterns_str}")
+        lines.append(f"Твои наблюдения за ней: {patterns_str}")
 
     lines.append("=== КОНЕЦ КОНТЕКСТА ===")
     return "\n".join(lines)
@@ -150,9 +150,12 @@ def ask_alex(
         system_prompt = load_system_prompt()
         context = build_context()
 
-        full_system = system_prompt + context
+        # Добавляем жесткую установку на прямое общение
+        direct_communication_rule = "\n\nВАЖНО: Ты говоришь НАПРЯМУЮ с Полиной. Она — твой единственный собеседник. Никогда не говори о ней в третьем лице (не используй 'она', 'её', когда обращаешься к ней). Используй 'ты', 'тебя', 'твоё'."
+        
+        full_system = system_prompt + context + direct_communication_rule
         if extra_instruction:
-            full_system += f"\n\n{extra_instruction}"
+            full_system += f"\n\nДОПОЛНИТЕЛЬНАЯ ИНСТРУКЦИЯ: {extra_instruction}"
 
         history = get_history(limit=20)
 
