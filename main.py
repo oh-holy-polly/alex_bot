@@ -22,7 +22,11 @@ from notion_manager import notion
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
-    level=logging.INFO
+    level=logging.DEBUG,
+    handlers=[
+        logging.FileHandler("alex_bot.log"),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 

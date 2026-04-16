@@ -44,4 +44,4 @@ NIGHT_MINUTE        = int(os.getenv("NIGHT_MINUTE",        "0"))
 # ===== ПУТИ =====
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 DB_PATH     = os.path.join(BASE_DIR, "alex.db")
-PROMPT_PATH = os.path.join(BASE_DIR, "prompts", "system.txt")
+PROMPT_PATH = os.path.join(BASE_DIR, "alex_system_prompt.txt")

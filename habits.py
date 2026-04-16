@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes
 from alex import ask_alex, ask_alex_system
 from notion_manager import notion
 from cache import get_cache, invalidate_cache
+from utils import extract_structured_data, parse_pipe_data, clean_llm_reply
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,11 @@ async def handle_add_habit_confirmed(update: Update, user_message: str):
     
     full_reply = ask_alex(user_message, force_smart=True, extra_instruction=extra)
     
-    if "HABIT_DATA:" in full_reply:
-        try:
-            data_part = full_reply.split("HABIT_DATA:")[1].split("\n")[0].strip()
-            name, freq, energy = [x.strip() for x in data_part.split("|")]
+    data_str = extract_structured_data(full_reply, "HABIT_DATA:")
+    if data_str:
+        parts = parse_pipe_data(data_str, 3)
+        if parts:
+            name, freq, energy = parts
             
             # Валидация значений для Notion select
             if freq not in ["Ежедневно", "Еженедельно"]: freq = "Ежедневно"
@@ -80,14 +82,11 @@ async def handle_add_habit_confirmed(update: Update, user_message: str):
             habit_id = notion.add_habit(name, freq, energy)
             if habit_id:
                 invalidate_cache("habits")
-                # Убираем техническую часть из ответа пользователю
-                user_reply = full_reply.split("HABIT_DATA:")[0].strip()
+                user_reply = clean_llm_reply(full_reply, ["HABIT_DATA:"])
                 if not user_reply:
-                    user_reply = full_reply.split("\n", 1)[1].strip()
+                    user_reply = "Окей, добавил привычку."
                 await update.message.reply_text(user_reply)
                 return
-        except Exception as e:
-            logger.error(f"Error parsing habit data: {e}")
 
     await update.message.reply_text(full_reply)
 
@@ -104,21 +103,20 @@ async def handle_new_pattern(update: Update, user_message: str):
     
     full_reply = ask_alex(user_message, force_smart=True, extra_instruction=extra)
     
-    if "PATTERN_DATA:" in full_reply:
-        try:
-            data_part = full_reply.split("PATTERN_DATA:")[1].split("\n")[0].strip()
-            name, trigger, signals = [x.strip() for x in data_part.split("|")]
+    data_str = extract_structured_data(full_reply, "PATTERN_DATA:")
+    if data_str:
+        parts = parse_pipe_data(data_str, 3)
+        if parts:
+            name, trigger, signals = parts
             
             pattern_id = notion.add_pattern(name, trigger, signals)
             if pattern_id:
                 invalidate_cache("patterns")
-                user_reply = full_reply.split("PATTERN_DATA:")[0].strip()
+                user_reply = clean_llm_reply(full_reply, ["PATTERN_DATA:"])
                 if not user_reply:
-                    user_reply = full_reply.split("\n", 1)[1].strip()
+                    user_reply = "Окей, зафиксировал паттерн."
                 await update.message.reply_text(user_reply)
                 return
-        except Exception as e:
-            logger.error(f"Error parsing pattern data: {e}")
 
     await update.message.reply_text(full_reply)
 
@@ -127,16 +125,15 @@ async def handle_new_pattern_from_text(full_text: str):
     Вспомогательная функция для извлечения и записи паттерна из технической строки.
     Используется в системных вызовах (дебрифинг, вечерний ритуал).
     """
-    if "PATTERN_DATA:" in full_text:
-        try:
-            data_part = full_text.split("PATTERN_DATA:")[1].split("\n")[0].strip()
-            name, trigger, signals = [x.strip() for x in data_part.split("|")]
+    data_str = extract_structured_data(full_text, "PATTERN_DATA:")
+    if data_str:
+        parts = parse_pipe_data(data_str, 3)
+        if parts:
+            name, trigger, signals = parts
             
             pattern_id = notion.add_pattern(name, trigger, signals)
             if pattern_id:
                 invalidate_cache("patterns")
                 logger.info(f"Auto-pattern added: {name}")
                 return True
-        except Exception as e:
-            logger.error(f"Error parsing auto-pattern data: {e}")
     return False

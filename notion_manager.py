@@ -519,6 +519,15 @@ class NotionManager:
         Обновляет все кэши разом.
         Вызывается раз в 15 минут через планировщик.
         """
+        # Сбрасываем кэши перед обновлением
+        keys_to_refresh = [
+            "recent_mood", "cycle_phase", "today_events", 
+            "upcoming_events", "active_goals", "habits", "patterns"
+        ]
+        for key in keys_to_refresh:
+            set_cache(key, None)
+
+        # Последовательно вызываем методы, которые теперь будут делать свежие запросы
         self.get_recent_mood()
         self.get_cycle_phase()
         self.get_today_events()
@@ -526,7 +535,7 @@ class NotionManager:
         self.get_active_goals()
         self.get_habits()
         self.get_patterns()
-        logger.info("All Notion caches refreshed")
+        logger.info("All Notion caches refreshed with fresh data")
 
     def get_briefing_context(self) -> str:
         """

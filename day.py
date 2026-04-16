@@ -21,6 +21,7 @@ from cache import (
 )
 from alex import ask_alex, ask_alex_system
 from notion_manager import notion
+from utils import extract_structured_data, clean_llm_reply
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +96,29 @@ async def start_task_cycle(update: Update, task_name: str):
         f"Фаза: {phase}, режим дня: {mode}\n"
         f"{patterns_text}\n\n"
         f"Оцени сколько времени займёт задача на основе её названия и контекста. "
-        f"Скажи когда заглянешь проверить — не точное время, а примерно "
-        f"('минут через 40', 'через час'). Коротко и по-алексовски."
+        f"Верни ответ в формате: TASK_ESTIMATE: [минуты]. "
+        f"И ниже напиши ответ Полине — скажи когда заглянешь проверить (примерно 70% от времени)."
     )
 
-    # Рассчитываем когда заглянуть
-    estimated_minutes = _estimate_task_duration(task_name, phase)
+    full_reply = ask_alex(
+        f"Начинаю: {task_name}",
+        force_smart=True,
+        extra_instruction=extra
+    )
+
+    # Извлекаем оценку времени
+    est_str = extract_structured_data(full_reply, "TASK_ESTIMATE:")
+    try:
+        if est_str:
+            # Очищаем от лишних символов (например, "45 мин" -> "45")
+            est_match = re.search(r'(\d+)', est_str)
+            estimated_minutes = int(est_match.group(1)) if est_match else 40
+        else:
+            estimated_minutes = _estimate_task_duration_fallback(task_name, phase)
+    except Exception as e:
+        logger.error(f"Error parsing task estimate: {e}")
+        estimated_minutes = 40
+
     check_time = now + timedelta(minutes=estimated_minutes * 0.7)
     set_state(KEY_TASK_CHECK_TIME, check_time.isoformat())
     set_state(KEY_NO_PING_REQUESTED, False)
@@ -113,41 +131,24 @@ async def start_task_cycle(update: Update, task_name: str):
         "check_time": check_time.isoformat()
     })
 
-    reply = ask_alex(
-        f"Начинаю: {task_name}",
-        force_smart=True,
-        extra_instruction=extra
-    )
-    await update.message.reply_text(reply)
+    user_reply = clean_llm_reply(full_reply, ["TASK_ESTIMATE:"])
+    await update.message.reply_text(user_reply)
 
 
-def _estimate_task_duration(task_name: str, phase: str) -> int:
+def _estimate_task_duration_fallback(task_name: str, phase: str) -> int:
     """
-    Грубая оценка времени задачи в минутах.
-    В реальности модель уточняет это в ответе.
+    Фолбэк оценка времени, если LLM не выдала формат.
     """
     name_lower = task_name.lower()
-
-    # По ключевым словам
     if any(w in name_lower for w in ["отчёт", "отчет", "презентация", "документ"]):
         base = 120
     elif any(w in name_lower for w in ["письмо", "email", "ответить"]):
         base = 20
-    elif any(w in name_lower for w in ["созвон", "встреча", "звонок"]):
-        base = 60
-    elif any(w in name_lower for w in ["почистить", "убрать", "помыть"]):
-        base = 30
-    elif any(w in name_lower for w in ["разобраться", "изучить", "прочитать"]):
-        base = 45
     else:
         base = 40
 
-    # Корректировка под фазу
-    if phase == "Спад":
-        base = int(base * 1.5)
-    elif phase == "Подъём":
-        base = int(base * 0.8)
-
+    if phase == "Спад": base = int(base * 1.5)
+    elif phase == "Подъём": base = int(base * 0.8)
     return base
 
 
