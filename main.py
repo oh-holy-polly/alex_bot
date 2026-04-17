@@ -298,8 +298,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "Не развлекай, не поддерживай разговор."
                 )
             )
-    await update.message.reply_text(night_reply)
-    return
+            await update.message.reply_text(night_reply)
+            return
 
     # ── Гибкий роутинг через intent_router ──
     needs_clarification, action_results = route_message(user_message)
