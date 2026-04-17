@@ -121,7 +121,8 @@ def build_context() -> str:
     if patterns:
         patterns_str = "; ".join(p.get("name", "") for p in patterns[:2])
         lines.append(f"Твои наблюдения за ней: {patterns_str}")
-
+    
+    lines.append("\nВАЖНО: Используй ТОЛЬКО данные из этого контекста. Если данных нет - так и скажи, не выдумывай события, встречи и задачи которых здесь нет.")
     lines.append("=== КОНЕЦ КОНТЕКСТА ===")
     return "\n".join(lines)
 
