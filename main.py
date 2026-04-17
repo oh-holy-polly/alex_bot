@@ -389,6 +389,29 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from morning import handle_morning_photo
     await handle_morning_photo(update, context)
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_polina(update):
+        return
+    
+    await update.message.reply_text("🎙️")
+    
+    try:
+        file = await context.bot.get_file(update.message.voice.file_id)
+        voice_bytes = await file.download_as_bytearray()
+        
+        from alex import transcribe_voice
+        text = transcribe_voice(bytes(voice_bytes))
+        
+        logger.info(f"Voice → text: {text[:60]}...")
+        
+        # Подменяем текст и прогоняем через стандартный handle_message
+        update.message.text = text
+        await handle_message(update, context)
+        
+    except Exception as e:
+        logger.error(f"Voice error: {e}")
+        await update.message.reply_text("Не расслышал, попробуй ещё раз")
+
 # ───────────────────────────────────────────
 # ЗАПУСК
 # ───────────────────────────────────────────
