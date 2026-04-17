@@ -25,6 +25,7 @@ from cache import (
 )
 from alex import ask_alex, ask_alex_system
 from notion_manager import notion
+from intent_router import route_message
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
