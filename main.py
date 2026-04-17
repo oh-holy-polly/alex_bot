@@ -289,17 +289,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not get_night_mode():
             set_night_mode(True)
           
-            night_reply = ask_alex(
-                user_message,
-                force_smart=False,
-                extra_instruction=(
-                    "Сейчас ночь, после полуночи. Ты ночной вышибала. "
-                    "Отвечай максимально скучно и коротко, намекай что пора спать. "
-                    "Не развлекай, не поддерживай разговор."
-                )
+        night_reply = ask_alex(
+            user_message,
+            force_smart=False,
+            extra_instruction=(
+                "Сейчас ночь, после полуночи. Ты ночной вышибала. "
+                "Отвечай максимально скучно и коротко, намекай что пора спать. "
+                "Не развлекай, не поддерживай разговор."
             )
-            await update.message.reply_text(night_reply)
-            return
+        )
+        await update.message.reply_text(night_reply)
+        return
 
     # ── Гибкий роутинг через intent_router ──
     needs_clarification, action_results = route_message(user_message)
