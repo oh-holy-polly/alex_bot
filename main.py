@@ -437,6 +437,9 @@ def main():
     # Текст
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # Голосовое сообщение
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+
     # Планировщик
     from scheduler import setup_scheduler
     setup_scheduler(app)
