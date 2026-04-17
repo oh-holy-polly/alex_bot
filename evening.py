@@ -100,6 +100,10 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     if not get_state(KEY_AWAITING_TOMORROW, False):
         return False
 
+    # ИСПРАВЛЕНИЕ: Если сообщение длинное, это явно список задач, а не время
+    if len(text) > 15:
+        return False
+
     import re
     match = re.search(r'(\d{1,2})[.:,]?(\d{2})?', text)
     if not match:
@@ -109,12 +113,9 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     minute = int(match.group(2)) if match.group(2) else 0
 
     if not (5 <= hour <= 13):
-        reply = ask_alex_system(
-            f"Полина назвала странное время подъёма: {hour}:{minute:02d}. "
-            f"Уточни — это точно время когда вставать?"
-        )
-        await update.message.reply_text(reply)
-        return True
+        # Если время не в диапазоне 5-13, считаем это пунктом списка (например "1. Пост")
+        # и отдаем сообщение дальше основной логике
+        return False
 
     # Сохраняем и перенастраиваем будильники
     set_wake_time(hour, minute)

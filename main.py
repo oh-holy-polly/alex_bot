@@ -300,6 +300,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(night_reply)
         return
+    else:
+        # Если утро, сбрасываем ночной режим
+        if get_night_mode():
+            set_night_mode(False)
 
     # ── Гибкий роутинг через intent_router ──
     needs_clarification, action_results = route_message(user_message)
