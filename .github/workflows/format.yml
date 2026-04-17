@@ -1,0 +1,24 @@
+name: Python format (black)
+
+on:
+  push: 
+    branches: [ main ]
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install black
+        run: pip install black
+
+      - name: Run black formatter
+        run: black .
