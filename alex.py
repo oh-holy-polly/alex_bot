@@ -154,6 +154,8 @@ def ask_alex(
 
         if extra_instruction:
             full_system += f"\n\n{extra_instruction}"
+            # Напоминаем про характер, если пришла системная инструкция, чтобы не стал "роботом"
+            full_system += "\nKeep your personality: sarcastic, mix Russian/English, no boring helper talk."
 
         history = get_history(limit=10)  # было 20
         messages = [{"role": "system", "content": full_system}]

@@ -249,6 +249,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
 # ───────────────────────────────────────────
 
+PROCESSED_MSGS = {}
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
@@ -257,20 +259,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_id = update.message.message_id
     now_ts = datetime.now().timestamp()
     
-    if "processed_msgs" not in context.user_data:
-        context.user_data["processed_msgs"] = {}
+    # Используем глобальный словарь для надежности
+    if msg_id in PROCESSED_MSGS:
+        if now_ts - PROCESSED_MSGS[msg_id] < 60:
+            logger.warning(f"Duplicate message detected: {msg_id}, skipping.")
+            return
     
-    # Проверяем, не обрабатывали ли мы это сообщение в последние 60 секунд
-    if msg_id in context.user_data["processed_msgs"]:
-        logger.warning(f"Duplicate message detected: {msg_id}, skipping.")
-        return
+    PROCESSED_MSGS[msg_id] = now_ts
     
-    # Очищаем старые ID (старше 5 минут)
-    context.user_data["processed_msgs"] = {
-        m_id: ts for m_id, ts in context.user_data["processed_msgs"].items() 
-        if now_ts - ts < 300
-    }
-    context.user_data["processed_msgs"][msg_id] = now_ts
+    # Очистка старых ID раз в 100 сообщений
+    if len(PROCESSED_MSGS) > 100:
+        for m_id in list(PROCESSED_MSGS.keys()):
+            if now_ts - PROCESSED_MSGS[m_id] > 300:
+                del PROCESSED_MSGS[m_id]
 
     user_message = update.message.text
 
