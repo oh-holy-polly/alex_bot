@@ -370,7 +370,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_morning_photo(update, context)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка голосовых сообщений через Groq Whisper"""
     if not is_polina(update):
         return
     
@@ -378,42 +377,48 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     temp_path = None
     try:
+        # 1. Получаем файл
         file = await context.bot.get_file(update.message.voice.file_id)
         
-        # Скачиваем во временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as f:
-            temp_path = f.name
+        # 2. Создаем временный файл
+        fd, temp_path = tempfile.mkstemp(suffix='.ogg')
+        os.close(fd) # Закрываем дескриптор сразу
         
-        # ОЖИДАЕМ завершения скачивания
+        # 3. Скачиваем
         await file.download_to_drive(temp_path)
+        logger.info(f"File downloaded to {temp_path}")
 
-        from groq import Groq
+        # 4. Транскрибация (Используем OpenAI-совместимый интерфейс Groq — это самый надежный путь)
+        from openai import OpenAI
         from config import GROQ_API_KEY
-        sync_client = Groq(api_key=GROQ_API_KEY)
-
-        # Транскрибация через Groq Whisper
+        
+        # Groq полностью поддерживает интерфейс OpenAI, это работает даже на старых библиотеках
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=GROQ_API_KEY
+         )
+        
         with open(temp_path, "rb") as audio_file:
-            transcript = sync_client.audio.transcriptions.create(
-                file=("voice.ogg", audio_file.read()),
-                model="whisper-large-v3"
+            translation = client.audio.translations.create(
+                model="whisper-large-v3",
+                file=audio_file,
             )
         
-        text = transcript.text
-        logger.info(f"Voice → text: {text[:60]}...")
+        text = translation.text
+        logger.info(f"Voice → text: {text}")
         
         if not text or len(text.strip()) < 2:
             await update.message.reply_text("Не расслышал, попробуй ещё раз")
             return
 
-        # Подменяем текст и прогоняем через стандартный handle_message
+        # 5. Обработка текста
         update.message.text = text
         await handle_message(update, context)
         
     except Exception as e:
-        logger.error(f"Voice error: {e}")
-        await update.message.reply_text("Не расслышал, попробуй ещё раз")
+        logger.error(f"CRITICAL VOICE ERROR: {e}", exc_info=True)
+        await update.message.reply_text(f"Ошибка: {str(e)[:50]}") # Бот сам скажет, в чем проблема!
     finally:
-        # Всегда удаляем временный файл
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
