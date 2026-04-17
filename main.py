@@ -126,7 +126,7 @@ def detect_intent(message: str) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
-    reply = ask_alex_system(
+    reply = await ask_alex_system(
         "Полина только что запустила бота командой /start. "
         "Поздоровайся как Алекс — коротко, живо, без пафоса."
     )
@@ -152,7 +152,7 @@ async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     phase = notion.get_cyclothymia_phase()
     notion.log_mood(score=score, phase=phase)
-    reply = ask_alex(
+    reply = await ask_alex(
         f"Полина только что залогировала настроение {score}/10. Фаза: {phase}. "
         f"Отреагируй коротко и по-человечески.",
         force_smart=False
@@ -167,7 +167,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Целей нет. Это либо дзен, либо проблема😁")
         return
     goals_text = "\n".join(f"— {g['name']} ({g['priority']})" for g in goals)
-    reply = ask_alex(
+    reply = await ask_alex(
         f"Покажи Полине её активные цели и скажи что-нибудь острое:\n{goals_text}",
         force_smart=False
     )
@@ -196,7 +196,7 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not task:
         await update.message.reply_text("Активной задачи нет. Скажи с чего начнёшь — и я засеку")
         return
-    reply = ask_alex(
+    reply = await ask_alex(
         f"Полина спросила про текущую задачу. Активная задача: {task.get('name')}. "
         f"Началась в {task.get('started_at')}. Спроси как дела.",
         force_smart=False
@@ -209,7 +209,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Сейчас посмотрю что у нас на сегодня...")
     notion.refresh_all_caches()
     briefing_context = notion.get_briefing_context()
-    reply = ask_alex(
+    reply = await ask_alex(
         "Полина попросила брифинг вручную.",
         force_smart=True,
         extra_instruction=briefing_context
@@ -224,7 +224,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет активной задачи — нечего закрывать")
         return
     set_active_task(None)
-    reply = ask_alex(
+    reply = await ask_alex(
         f"Полина только что закрыла задачу: {task.get('name')}. "
         f"Отреагируй как Алекс — это победа, даже если небольшая.",
         force_smart=False
@@ -292,7 +292,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not get_night_mode():
             set_night_mode(True)
           
-        night_reply = ask_alex(
+        night_reply = await ask_alex(
             user_message,
             force_smart=False,
             extra_instruction=(
@@ -314,7 +314,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if needs_clarification:
         # Есть что-то требующее уточнения
         clarify_context = "\n".join(needs_clarification)
-        reply = ask_alex(
+        reply = await ask_alex(
             user_message,
             force_smart=False,
             extra_instruction=(
@@ -329,7 +329,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action_results:
         # Действия выполнены — Алекс подтверждает в своём стиле
         actions_context = "\n".join(action_results)
-        reply = ask_alex(
+        reply = await ask_alex(
             user_message,
             force_smart=False,
             extra_instruction=(
@@ -343,7 +343,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Обычный разговор — просто Алекс ──
-    reply = ask_alex(user_message)
+    reply = await ask_alex(user_message)
     await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
@@ -356,7 +356,7 @@ async def _handle_save_to_archive(update: Update, user_message: str):
         content=user_message,
         tags=["задание"]
     )
-    reply = ask_alex(
+    reply = await ask_alex(
         f"Полина попросила сохранить это в архив: «{user_message}». "
         f"Подтверди что сохранил — коротко.",
         force_smart=False
@@ -384,7 +384,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as f:
             temp_path = f.name
         
-        # ОЖИДАЕМ завершения скачивания (await исправлен)
+        # ОЖИДАЕМ завершения скачивания
         await file.download_to_drive(temp_path)
 
         # Транскрибация через Groq Whisper
