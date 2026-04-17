@@ -387,12 +387,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ОЖИДАЕМ завершения скачивания
         await file.download_to_drive(temp_path)
 
+        from groq import Groq
+        from config import GROQ_API_KEY
+        sync_client = Groq(api_key=GROQ_API_KEY)
+
         # Транскрибация через Groq Whisper
         with open(temp_path, "rb") as audio_file:
-            transcript = await groq_client.audio.transcriptions.create(
+            transcript = sync_client.audio.transcriptions.create(
                 file=("voice.ogg", audio_file.read()),
-                model="whisper-large-v3",
-                response_format="verbose_json",
+                model="whisper-large-v3"
             )
         
         text = transcript.text
