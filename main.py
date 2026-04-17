@@ -275,68 +275,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
 
     # ── Утренние состояния (сны, настроение) ──
-from morning import handle_morning_text
-if await handle_morning_text(update, user_message):
-return
+    from morning import handle_morning_text
+    if await handle_morning_text(update, user_message):
+        return
 
-# ── Вечерние состояния (время подъёма) ──
-from evening import handle_evening_text
-if await handle_evening_text(update, user_message, context.application):
-return
+    # ── Вечерние состояния (время подъёма) ──
+    from evening import handle_evening_text
+    if await handle_evening_text(update, user_message, context.application):
+        return
 
-# ── Ночной режим ──
-if is_night():
-if not get_night_mode():
-set_night_mode(True)
-night_reply = ask_alex(
-user_message,
-force_smart=False,
-extra_instruction=(
-"Сейчас ночь, после полуночи. Ты ночной вышибала. "
-"Отвечай максимально скучно и коротко, намекай что пора спать. "
-"Не развлекай, не поддерживай разговор."
-)
-)
-await update.message.reply_text(night_reply)
-return
+    # ── Ночной режим ──
+    if is_night():
+        if not get_night_mode():
+            set_night_mode(True)
+          
+    night_reply = ask_alex(
+        user_message,
+        force_smart=False,
+        extra_instruction=(
+            "Сейчас ночь, после полуночи. Ты ночной вышибала. "
+            "Отвечай максимально скучно и коротко, намекай что пора спать. "
+            "Не развлекай, не поддерживай разговор."
+        )
+    )
+    await update.message.reply_text(night_reply)
+    return
 
-# ── Гибкий роутинг через intent_router ──
-needs_clarification, action_results = route_message(user_message)
+    # ── Гибкий роутинг через intent_router ──
+    needs_clarification, action_results = route_message(user_message)
 
-if needs_clarification:
-# Есть что-то требующее уточнения — Алекс переспрашивает
-clarify_context = "\n".join(action_results)
-reply = ask_alex(
-user_message,
-force_smart=False,
-extra_instruction=(
-f"Результаты попытки записи в Notion:\n{clarify_context}\n\n"
-f"Там где NOTION_CLARIFY — нужно переспросить Полину. "
-f"Сделай это естественно, в стиле Алекса, одним вопросом."
-)
-)
-await update.message.reply_text(reply)
-return
+    if needs_clarification:
+    # Есть что-то требующее уточнения — Алекс переспрашивает
+        clarify_context = "\n".join(action_results)
+        reply = ask_alex(
+            user_message,
+            force_smart=False,
+            extra_instruction=(
+                f"Результаты попытки записи в Notion:\n{clarify_context}\n\n"
+                f"Там где NOTION_CLARIFY — нужно переспросить Полину. "
+                f"Сделай это естественно, в стиле Алекса, одним вопросом."
+            )
+        )
+        await update.message.reply_text(reply)
+        return
 
-if action_results:
-# Действия выполнены — Алекс подтверждает в своём стиле
-actions_context = "\n".join(action_results)
-reply = ask_alex(
-user_message,
-force_smart=False,
-extra_instruction=(
-f"Ты только что выполнила следующие действия в Notion:\n{actions_context}\n\n"
-f"Подтверди это Полине коротко и в стиле Алекса. "
-f"Если было несколько действий — упомяни все. "
-f"Если что-то не записалось (NOTION_ERROR) — скажи об этом честно."
-)
-)
-await update.message.reply_text(reply)
-return
+    if action_results:
+    # Действия выполнены — Алекс подтверждает в своём стиле
+        actions_context = "\n".join(action_results)
+        reply = ask_alex(
+            user_message,
+            force_smart=False,
+            extra_instruction=(
+                f"Ты только что выполнила следующие действия в Notion:\n{actions_context}\n\n"
+                f"Подтверди это Полине коротко и в стиле Алекса. "
+                f"Если было несколько действий — упомяни все. "
+                f"Если что-то не записалось (NOTION_ERROR) — скажи об этом честно."
+            )
+        )
+        await update.message.reply_text(reply)
+        return
 
-# ── Обычный разговор — просто Алекс ──
-reply = ask_alex(user_message)
-await update.message.reply_text(reply)
+    # ── Обычный разговор — просто Алекс ──
+    reply = ask_alex(user_message)
+    await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
