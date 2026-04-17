@@ -408,7 +408,10 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Текст
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
+        handle_message
+    ))
 
     # Голосовое сообщение
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
