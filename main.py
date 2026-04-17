@@ -389,8 +389,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Транскрибация через Groq Whisper
         with open(temp_path, "rb") as audio_file:
-            transcript = groq_client.audio.transcriptions.create(
-                file=(os.path.basename(temp_path), audio_file.read()),
+            transcript = await groq_client.audio.transcriptions.create(
+                file=("voice.ogg", audio_file.read()),
                 model="whisper-large-v3",
                 response_format="verbose_json",
             )
