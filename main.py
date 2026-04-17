@@ -253,7 +253,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 PROCESSED_MSGS = {}
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voice_text: str = None):
     if not is_polina(update):
         return
 
@@ -275,7 +275,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if now_ts - PROCESSED_MSGS[m_id] > 300:
                 del PROCESSED_MSGS[m_id]
 
-    user_message = update.message.text
+    user_message = voice_text if voice_text else update.message.text
 
     # ── Утренние состояния (сны, настроение) ──
     from morning import handle_morning_text
@@ -370,6 +370,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_morning_photo(update, context)
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка голосовых сообщений через Groq Whisper"""
     if not is_polina(update):
         return
     
@@ -377,26 +378,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     temp_path = None
     try:
-        # 1. Получаем файл
         file = await context.bot.get_file(update.message.voice.file_id)
         
-        # 2. Создаем временный файл
+        # Создаем временный файл
         fd, temp_path = tempfile.mkstemp(suffix='.ogg')
-        os.close(fd) # Закрываем дескриптор сразу
+        os.close(fd)
         
-        # 3. Скачиваем
+        # Скачиваем
         await file.download_to_drive(temp_path)
         logger.info(f"File downloaded to {temp_path}")
 
-        # 4. Транскрибация (Используем OpenAI-совместимый интерфейс Groq — это самый надежный путь)
+        # Транскрибация через OpenAI-совместимый клиент Groq
         from openai import OpenAI
         from config import GROQ_API_KEY
         
-        # Groq полностью поддерживает интерфейс OpenAI, это работает даже на старых библиотеках
         client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
             api_key=GROQ_API_KEY
-         )
+        )
         
         with open(temp_path, "rb") as audio_file:
             translation = client.audio.translations.create(
@@ -411,14 +410,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Не расслышал, попробуй ещё раз")
             return
 
-        # 5. Обработка текста
-        update.message.text = text
-        await handle_message(update, context)
+        # Передаем текст напрямую в handle_message
+        await handle_message(update, context, voice_text=text)
         
     except Exception as e:
         logger.error(f"CRITICAL VOICE ERROR: {e}", exc_info=True)
-        await update.message.reply_text(f"Ошибка: {str(e)[:50]}") # Бот сам скажет, в чем проблема!
+        await update.message.reply_text("Не расслышал, попробуй ещё раз")
     finally:
+        # Всегда удаляем временный файл
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
