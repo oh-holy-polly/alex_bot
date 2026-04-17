@@ -274,97 +274,68 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
 
     # ── Утренние состояния (сны, настроение) ──
-    from morning import handle_morning_text
-    if await handle_morning_text(update, user_message):
-        return
+from morning import handle_morning_text
+if await handle_morning_text(update, user_message):
+return
 
-    # ── Вечерние состояния (время подъёма) ──
-    from evening import handle_evening_text
-    if await handle_evening_text(update, user_message, context.application):
-        return
+# ── Вечерние состояния (время подъёма) ──
+from evening import handle_evening_text
+if await handle_evening_text(update, user_message, context.application):
+return
 
-    # ── Ночной режим ──
-    if is_night():
-        if not get_night_mode():
-            set_night_mode(True)
-        night_reply = ask_alex(
-            user_message,
-            force_smart=False,
-            extra_instruction=(
-                "Сейчас глубокая ночь. Ты сонный и ворчливый Алекс. "
-                "Отвечай максимально коротко (одно предложение), намекай что пора спать. "
-                "Не поддерживай длинные дискуссии. Ты говоришь напрямую с Полиной."
-            )
-        )
-        await update.message.reply_text(night_reply)
-        return
+# ── Ночной режим ──
+if is_night():
+if not get_night_mode():
+set_night_mode(True)
+night_reply = ask_alex(
+user_message,
+force_smart=False,
+extra_instruction=(
+"Сейчас ночь, после полуночи. Ты ночной вышибала. "
+"Отвечай максимально скучно и коротко, намекай что пора спать. "
+"Не развлекай, не поддерживай разговор."
+)
+)
+await update.message.reply_text(night_reply)
+return
 
-    # ── Умный детектор намерений ──
-    detected = detect_intent(user_message)
-    intent = detected.get("intent", "chat")
-    confidence = detected.get("confidence", 0.5)
+# ── Гибкий роутинг через intent_router ──
+needs_clarification, action_results = route_message(user_message)
 
-    logger.info(f"Detected intent: {intent} (conf={confidence})")
+if needs_clarification:
+# Есть что-то требующее уточнения — Алекс переспрашивает
+clarify_context = "\n".join(action_results)
+reply = ask_alex(
+user_message,
+force_smart=False,
+extra_instruction=(
+f"Результаты попытки записи в Notion:\n{clarify_context}\n\n"
+f"Там где NOTION_CLARIFY — нужно переспросить Полину. "
+f"Сделай это естественно, в стиле Алекса, одним вопросом."
+)
+)
+await update.message.reply_text(reply)
+return
 
-    # Низкая уверенность → просто чат
-    if confidence < 0.6:
-        intent = "chat"
+if action_results:
+# Действия выполнены — Алекс подтверждает в своём стиле
+actions_context = "\n".join(action_results)
+reply = ask_alex(
+user_message,
+force_smart=False,
+extra_instruction=(
+f"Ты только что выполнила следующие действия в Notion:\n{actions_context}\n\n"
+f"Подтверди это Полине коротко и в стиле Алекса. "
+f"Если было несколько действий — упомяни все. "
+f"Если что-то не записалось (NOTION_ERROR) — скажи об этом честно."
+)
+)
+await update.message.reply_text(reply)
+return
 
-    # ── Роутинг по намерению ──
-
-    if intent == "task_start":
-        from day import start_task_cycle
-        await start_task_cycle(update, user_message)
-
-    elif intent == "task_done":
-        task = get_active_task()
-        if task:
-            set_active_task(None)
-            reply = ask_alex(
-                f"Полина закрыла задачу: {task.get('name')}. Отреагируй.",
-                force_smart=False
-            )
-            await update.message.reply_text(reply)
-        else:
-            # Нет активной задачи — просто отреагируй
-            reply = ask_alex(user_message)
-            await update.message.reply_text(reply)
-
-    elif intent == "task_stuck":
-        from day import handle_task_stuck
-        await handle_task_stuck(update, user_message)
-
-    elif intent == "no_ping":
-        from day import handle_no_ping_request
-        await handle_no_ping_request(update, user_message)
-
-    elif intent == "add_habit":
-        from habits import handle_add_habit_confirmed
-        await handle_add_habit_confirmed(update, user_message)
-
-    elif intent == "habit_done":
-        from habits import handle_habit_done
-        await handle_habit_done(update, user_message)
-
-    elif intent == "new_pattern":
-        from habits import handle_new_pattern
-        await handle_new_pattern(update, user_message)
-
-    elif intent == "save_archive":
-        await _handle_save_to_archive(update, user_message)
-
-    elif intent == "suggest_event":
-        from day import suggest_event
-        await suggest_event(update, context)
-
-    elif intent == "new_idea":
-        from day import handle_new_idea
-        await handle_new_idea(update, user_message)
-
-    else:
-        # chat — обычный разговор
-        reply = ask_alex(user_message)
-        await update.message.reply_text(reply)
+# ── Обычный разговор — просто Алекс ──
+reply = ask_alex(user_message)
+await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
