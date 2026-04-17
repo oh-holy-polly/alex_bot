@@ -184,6 +184,21 @@ def ask_alex(
         return "Полина, что-то сломалось на моей стороне. Попробуй ещё раз"
 
 
+def transcribe_voice(voice_bytes: bytes) -> str:
+    """Транскрибирует голосовое через Groq Whisper"""
+    import io
+    audio_file = io.BytesIO(voice_bytes)
+    audio_file.name = "voice.ogg"
+    
+    transcription = groq_client.audio.transcriptions.create(
+        file=audio_file,
+        model="whisper-large-v3-turbo",
+        language="ru",
+        response_format="text"
+    )
+    return transcription
+
+
 def ask_alex_system(instruction: str) -> str:
     """
     Вызов без пользовательского сообщения — для системных задач.
