@@ -3,8 +3,8 @@ main.py — точка входа, все Telegram handlers
 
 ИЗМЕНЕНИЯ v2:
 - Умный детектор намерений через LLM (вместо жёсткого keyword matching)
-- Намерения: task_start / task_done / task_stuck / no_ping / add_habit /
-             habit_done / new_pattern / save_archive / suggest_event /
+- Намерения: task_start / task_done / task_stuck / no_ping / add_habit / 
+             habit_done / new_pattern / save_archive / suggest_event / 
              new_idea / chat
 - Детектор вызывает быструю 8b модель, возвращает JSON
 """
@@ -253,6 +253,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 PROCESSED_MSGS = {}
 
+# ДОБАВЛЕН ПАРАМЕТР voice_text ДЛЯ ХИРУРГИЧЕСКОГО ИСПРАВЛЕНИЯ
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voice_text: str = None):
     if not is_polina(update):
         return
@@ -275,6 +276,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voi
             if now_ts - PROCESSED_MSGS[m_id] > 300:
                 del PROCESSED_MSGS[m_id]
 
+    # ИСПОЛЬЗУЕМ ЛИБО ТЕКСТ ИЗ ГОЛОСА, ЛИБО ИЗ СООБЩЕНИЯ
     user_message = voice_text if voice_text else update.message.text
 
     # ── Утренние состояния (сны, настроение) ──
@@ -309,6 +311,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voi
             set_night_mode(False)
 
     # ── Гибкий роутинг через intent_router ──
+    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
     needs_clarification, action_results = route_message(user_message)
 
     if needs_clarification:
@@ -343,7 +346,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voi
         return
 
     # ── Обычный разговор — просто Алекс ──
-    reply = await ask_alex(user_message)
+    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
+    reply = ask_alex(user_message)
     await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
@@ -356,7 +360,8 @@ async def _handle_save_to_archive(update: Update, user_message: str):
         content=user_message,
         tags=["задание"]
     )
-    reply = await ask_alex(
+    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
+    reply = ask_alex(
         f"Полина попросила сохранить это в архив: «{user_message}». "
         f"Подтверди что сохранил — коротко.",
         force_smart=False
@@ -380,41 +385,33 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         file = await context.bot.get_file(update.message.voice.file_id)
         
-        # Создаем временный файл
-        fd, temp_path = tempfile.mkstemp(suffix='.ogg')
-        os.close(fd)
+        # Скачиваем во временный файл
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as f:
+            temp_path = f.name
         
-        # Скачиваем
+        # ОЖИДАЕМ завершения скачивания
         await file.download_to_drive(temp_path)
-        logger.info(f"File downloaded to {temp_path}")
 
-        # Транскрибация через OpenAI-совместимый клиент Groq
-        from openai import OpenAI
-        from config import GROQ_API_KEY
-        
-        client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=GROQ_API_KEY
-        )
-        
+        # Транскрибация через Groq Whisper (синхронно, как в alex.py)
         with open(temp_path, "rb") as audio_file:
-            translation = client.audio.translations.create(
+            transcript = groq_client.audio.transcriptions.create(
+                file=("voice.ogg", audio_file.read()),
                 model="whisper-large-v3",
-                file=audio_file,
+                response_format="verbose_json",
             )
         
-        text = translation.text
-        logger.info(f"Voice → text: {text}")
+        text = transcript.text
+        logger.info(f"Voice → text: {text[:60]}...")
         
         if not text or len(text.strip()) < 2:
             await update.message.reply_text("Не расслышал, попробуй ещё раз")
             return
 
-        # Передаем текст напрямую в handle_message
+        # ПЕРЕДАЕМ ТЕКСТ НАПРЯМУЮ В handle_message БЕЗ ПОДМЕНЫ АТРИБУТОВ
         await handle_message(update, context, voice_text=text)
         
     except Exception as e:
-        logger.error(f"CRITICAL VOICE ERROR: {e}", exc_info=True)
+        logger.error(f"Voice error: {e}", exc_info=True)
         await update.message.reply_text("Не расслышал, попробуй ещё раз")
     finally:
         # Всегда удаляем временный файл
