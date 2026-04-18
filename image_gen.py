@@ -1,19 +1,19 @@
 """
 image_gen.py — генерация утренней картинки:
-  - фото с Unsplash по настроению
-  - личная фраза от Алекса через 70b
-  - HTML-шаблон + playwright скриншот
-  - отправка в Telegram
+- фото с Unsplash по настроению
+- личная фраза от Алекса через 70b
+- Pillow: текст сверху поверх фото
+- отправка в Telegram
 """
 
 import logging
 import os
 import random
-import asyncio
+import io
 from datetime import datetime
 
 import requests
-from playwright.async_api import async_playwright
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from config import TIMEZONE, BASE_DIR
 from alex import ask_alex_system
@@ -22,20 +22,25 @@ from notion_manager import notion
 logger = logging.getLogger(__name__)
 
 UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "")
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
-OUTPUT_DIR    = os.path.join(BASE_DIR, "temp")
+
+OUTPUT_DIR = os.path.join(BASE_DIR, "temp")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Размер картинки 4:5
+IMG_WIDTH  = 800
+IMG_HEIGHT = 1000
+
+# Шрифт — DejaVu Bold, есть на Ubuntu по умолчанию
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 # ───────────────────────────────────────────
 # UNSPLASH
 # ───────────────────────────────────────────
 
-# Теги под настроение
 MOOD_QUERIES = {
-    "нежный":        ["soft morning", "cozy room", "morning light", "calm nature"],
-    "дерзкий":       ["bold architecture", "dramatic sky", "urban energy", "power nature"],
-    "кинематографичный": ["cinematic landscape", "moody film", "dark aesthetic", "foggy forest"],
+    "нежный":          ["soft morning light", "cozy pastel nature", "gentle fog landscape", "calm water reflection"],
+    "дерзкий":         ["bold dramatic sky", "urban architecture contrast", "stormy ocean power", "sharp mountain peak"],
+    "кинематографичный": ["cinematic moody landscape", "foggy forest road", "dark aesthetic nature", "rainy city night"],
 }
 
 PHASE_TO_STYLE = {
@@ -44,13 +49,12 @@ PHASE_TO_STYLE = {
     "Спад":   "нежный",
 }
 
-
-def get_unsplash_photo(query: str) -> str | None:
-    """Возвращает URL фото с Unsplash"""
+def get_unsplash_photo(query: str) -> bytes | None:
+    """Скачивает фото с Unsplash, возвращает байты"""
     try:
         if not UNSPLASH_ACCESS_KEY:
-            # Fallback — случайное фото без API
-            return f"https://source.unsplash.com/800x1200/?{query.replace(' ', ',')}"
+            logger.error("UNSPLASH_ACCESS_KEY не задан")
+            return None
 
         resp = requests.get(
             "https://api.unsplash.com/photos/random",
@@ -62,12 +66,16 @@ def get_unsplash_photo(query: str) -> str | None:
             headers={"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"},
             timeout=10
         )
-        data = resp.json()
-        return data["urls"]["regular"]
+        resp.raise_for_status()
+        photo_url = resp.json()["urls"]["regular"]
+
+        photo_resp = requests.get(photo_url, timeout=15)
+        photo_resp.raise_for_status()
+        return photo_resp.content
+
     except Exception as e:
         logger.error(f"Unsplash error: {e}")
-        return f"https://source.unsplash.com/800x1200/?{query.replace(' ', ',')}"
-
+        return None
 
 # ───────────────────────────────────────────
 # ГЕНЕРАЦИЯ ФРАЗЫ
@@ -82,146 +90,81 @@ def generate_morning_phrase(phase: str, score: int, cycle_phase: str) -> str:
         f"Сгенерируй одну утреннюю фразу для Полины.\n"
         f"Сегодня {day_name}, настроение {score}/10, фаза: {phase}, цикл: {cycle_phase}.\n\n"
         f"Правила:\n"
-        f"— Одна фраза, максимум две строки\n"
+        f"— Одна фраза, максимум 6-8 слов — она будет крупно напечатана на картинке\n"
         f"— Личная, под этот конкретный день\n"
         f"— Не банальная мотивашка\n"
         f"— Может быть резкой, нежной или смешной — Алекс сам чувствует что нужно\n"
-        f"— Без подписи, без имени, просто фраза\n\n"
+        f"— Без подписи, без имени, просто фраза\n"
+        f"— Только текст, никаких кавычек\n\n"
         f"Примеры стиля (не копировать, только ориентир):\n"
-        f"— «Сегодня среда, ПМС день 2, впереди три встречи. Выживи. Это уже победа»\n"
+        f"— «Сегодня выживи. Этого достаточно»\n"
         f"— «Дохуя хочу — дохуя получу»\n"
-        f"— «Сегодня самый лучший день»"
+        f"— «Сегодня самый лучший день»\n"
+        f"— «ПМС день 2. Ты справишься»"
     )
     return ask_alex_system(instruction)
 
-
 # ───────────────────────────────────────────
-# HTML ШАБЛОНЫ
-# ───────────────────────────────────────────
-
-def render_html(photo_url: str, phrase: str, style: str) -> str:
-    """Рендерит HTML для скриншота"""
-
-    styles = {
-        "нежный": {
-            "font": "Georgia, serif",
-            "font_size": "52px",
-            "font_weight": "400",
-            "color": "rgba(255,255,255,0.92)",
-            "text_shadow": "0 2px 20px rgba(0,0,0,0.3)",
-            "overlay": "rgba(0,0,0,0.15)",
-            "position": "center",
-        },
-        "дерзкий": {
-            "font": "'Arial Black', sans-serif",
-            "font_size": "64px",
-            "font_weight": "900",
-            "color": "#ffffff",
-            "text_shadow": "none",
-            "overlay": "rgba(0,0,0,0.25)",
-            "position": "center-left",
-        },
-        "кинематографичный": {
-            "font": "'Helvetica Neue', Arial, sans-serif",
-            "font_size": "44px",
-            "font_weight": "300",
-            "color": "rgba(255,255,255,0.88)",
-            "text_shadow": "0 1px 30px rgba(0,0,0,0.5)",
-            "overlay": "rgba(0,0,0,0.35)",
-            "position": "bottom",
-        },
-    }
-
-    s = styles.get(style, styles["кинематографичный"])
-
-    text_align = "left" if s["position"] == "center-left" else "center"
-    valign = "flex-end" if s["position"] == "bottom" else "center"
-    padding = "0 48px 80px" if s["position"] == "bottom" else "0 48px"
-
-    # Разбиваем фразу на строки для красивого отображения
-    words = phrase.split()
-    if len(words) > 5:
-        mid = len(words) // 2
-        line1 = " ".join(words[:mid])
-        line2 = " ".join(words[mid:])
-        phrase_html = f"{line1}<br>{line2}"
-    else:
-        phrase_html = phrase
-
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{
-    width: 800px;
-    height: 1200px;
-    overflow: hidden;
-    font-family: {s["font"]};
-  }}
-  .bg {{
-    position: absolute;
-    inset: 0;
-    background-image: url('{photo_url}');
-    background-size: cover;
-    background-position: center;
-  }}
-  .overlay {{
-    position: absolute;
-    inset: 0;
-    background: {s["overlay"]};
-  }}
-  .content {{
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: {valign};
-    align-items: {text_align};
-    padding: {padding};
-    text-align: {text_align};
-  }}
-  .phrase {{
-    font-size: {s["font_size"]};
-    font-weight: {s["font_weight"]};
-    color: {s["color"]};
-    text-shadow: {s["text_shadow"]};
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-  }}
-</style>
-</head>
-<body>
-  <div class="bg"></div>
-  <div class="overlay"></div>
-  <div class="content">
-    <div class="phrase">{phrase_html}</div>
-  </div>
-</body>
-</html>"""
-    return html
-
-
-# ───────────────────────────────────────────
-# СКРИНШОТ ЧЕРЕЗ PLAYWRIGHT
+# РЕНДЕР ЧЕРЕЗ PILLOW
 # ───────────────────────────────────────────
 
-async def html_to_image(html: str, output_path: str) -> bool:
-    """Делает скриншот HTML страницы"""
+def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
+    """Накладывает текст сверху на фото"""
+
+    # Открываем и ресайзим фото под 800×1000
+    img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+    img = img.resize((IMG_WIDTH, IMG_HEIGHT), Image.LANCZOS)
+
+    draw = ImageDraw.Draw(img)
+
+    # ── Тёмный градиент сверху чтобы текст читался ──
+    gradient = Image.new("RGBA", (IMG_WIDTH, IMG_HEIGHT // 2), (0, 0, 0, 0))
+    grad_draw = ImageDraw.Draw(gradient)
+    for y in range(IMG_HEIGHT // 2):
+        # от alpha=180 сверху до 0 внизу
+        alpha = int(180 * (1 - y / (IMG_HEIGHT // 2)))
+        grad_draw.line([(0, y), (IMG_WIDTH, y)], fill=(0, 0, 0, alpha))
+
+    img = img.convert("RGBA")
+    img.paste(gradient, (0, 0), gradient)
+    img = img.convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    # ── Шрифт ──
+    font_size = 110
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch()
-            page = await browser.new_page(viewport={"width": 800, "height": 1200})
-            await page.set_content(html, wait_until="networkidle")
-            await asyncio.sleep(1)  # ждём загрузки фото
-            await page.screenshot(path=output_path, full_page=False)
-            await browser.close()
-        return True
-    except Exception as e:
-        logger.error(f"html_to_image error: {e}")
-        return False
+        font = ImageFont.truetype(FONT_PATH, font_size)
+    except Exception:
+        logger.warning("DejaVu не найден, использую дефолтный шрифт")
+        font = ImageFont.load_default()
 
+    # ── Разбиваем фразу на слова, каждое слово — отдельная строка (стиль первой картинки) ──
+    words = phrase.upper().split()
+
+    # Подбираем размер шрифта чтобы самое длинное слово влезало
+    max_word = max(words, key=len)
+    while font_size > 40:
+        try:
+            font = ImageFont.truetype(FONT_PATH, font_size)
+        except Exception:
+            break
+        bbox = draw.textbbox((0, 0), max_word, font=font)
+        word_width = bbox[2] - bbox[0]
+        if word_width <= IMG_WIDTH - 80:  # отступ 40px с каждой стороны
+            break
+        font_size -= 5
+
+    # Считаем высоту строки
+    bbox = draw.textbbox((0, 0), "A", font=font)
+    line_height = (bbox[3] - bbox[1]) + 10
+
+    # Рисуем слова сверху вниз, начиная с отступа 50px
+    y = 50
+    for word in words:
+        draw.text((40, y), word, font=font, fill="white")
+        y += line_height
+
+    return img
 
 # ───────────────────────────────────────────
 # ГЛАВНАЯ ФУНКЦИЯ
@@ -233,39 +176,34 @@ async def generate_morning_image() -> str | None:
     Возвращает путь к файлу или None если что-то пошло не так.
     """
     try:
-        # Берём контекст
-        phase      = notion.get_cyclothymia_phase()
-        moods      = notion.get_recent_mood(days=1)
-        score      = moods[0]["score"] if moods and moods[0]["score"] else 5
-        cycle      = notion.get_cycle_phase()
+        # Контекст
+        phase = notion.get_cyclothymia_phase()
+        moods = notion.get_recent_mood(days=1)
+        score = moods[0]["score"] if moods and moods[0]["score"] else 5
+        cycle = notion.get_cycle_phase()
         cycle_phase = cycle.get("phase", "")
 
-        # Выбираем стиль
+        # Стиль (иногда случайный для сюрприза — 20% шанс)
         style = PHASE_TO_STYLE.get(phase, "кинематографичный")
-
-        # Иногда случайный стиль для сюрприза (20% шанс)
         if random.random() < 0.2:
             style = random.choice(list(MOOD_QUERIES.keys()))
 
-        # Фото с Unsplash
+        # Фото
         query = random.choice(MOOD_QUERIES[style])
-        photo_url = get_unsplash_photo(query)
-        if not photo_url:
+        photo_bytes = get_unsplash_photo(query)
+        if not photo_bytes:
             return None
 
-        # Фраза от Алекса
+        # Фраза
         phrase = generate_morning_phrase(phase, score, cycle_phase)
 
-        # Рендерим HTML
-        html = render_html(photo_url, phrase, style)
+        # Рендер
+        img = render_image(photo_bytes, phrase)
 
-        # Скриншот
+        # Сохраняем
         now = datetime.now(TIMEZONE)
-        output_path = os.path.join(OUTPUT_DIR, f"morning_{now.strftime('%Y%m%d_%H%M')}.png")
-
-        success = await html_to_image(html, output_path)
-        if not success:
-            return None
+        output_path = os.path.join(OUTPUT_DIR, f"morning_{now.strftime('%Y%m%d_%H%M')}.jpg")
+        img.save(output_path, "JPEG", quality=92)
 
         logger.info(f"Morning image generated: {output_path}")
         return output_path
@@ -275,36 +213,35 @@ async def generate_morning_image() -> str | None:
         return None
 
 
-async def send_morning_image(app, fallback_text: str = ""):
-    """Генерирует и отправляет утреннюю картинку"""
+async def send_morning_image(app) -> bool:
+    """
+    Генерирует и отправляет утреннюю картинку.
+    Возвращает True если отправила, False если нет (тогда caller отправит текст).
+    """
     from config import USER_TELEGRAM_ID
     try:
         image_path = await generate_morning_image()
         if image_path and os.path.exists(image_path):
             with open(image_path, "rb") as f:
                 await app.bot.send_photo(chat_id=USER_TELEGRAM_ID, photo=f)
-            os.remove(image_path)  # чистим temp
-        elif fallback_text:
-            await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=fallback_text)
+            os.remove(image_path)
+            return True
+        return False
     except Exception as e:
         logger.error(f"send_morning_image error: {e}")
-
+        return False
 
 # ───────────────────────────────────────────
 # ВИЗУАЛИЗАЦИЯ ЦЕЛИ (для наград)
 # ───────────────────────────────────────────
 
 async def generate_goal_image(goal_name: str) -> str | None:
-    """
-    Генерирует картинку для визуализации цели.
-    Используется в системе наград за большие победы.
-    """
+    """Генерирует картинку для визуализации цели"""
     try:
-        # Запрос под конкретную цель
         goal_queries = {
-            "грузия": ["georgia tbilisi", "caucasus mountains", "tbilisi old town"],
-            "путешест": ["travel adventure", "scenic road", "explore world"],
-            "накопить": ["abundance prosperity", "golden hour calm", "peaceful achievement"],
+            "грузия":    ["georgia tbilisi", "caucasus mountains", "tbilisi old town"],
+            "путешест":  ["travel adventure", "scenic road", "explore world"],
+            "накопить":  ["abundance prosperity", "golden hour calm", "peaceful achievement"],
         }
 
         query = "dream achievement success"
@@ -314,22 +251,23 @@ async def generate_goal_image(goal_name: str) -> str | None:
                 query = random.choice(queries)
                 break
 
-        photo_url = get_unsplash_photo(query)
-        if not photo_url:
+        photo_bytes = get_unsplash_photo(query)
+        if not photo_bytes:
             return None
 
         phrase = ask_alex_system(
             f"Полина сделала что-то важное в направлении цели: «{goal_name}». "
             f"Напиши одну фразу — что она на шаг ближе. "
-            f"Коротко, лично, без банальщины."
+            f"Максимум 6 слов, коротко, лично, без банальщины. Только текст."
         )
 
-        html = render_html(photo_url, phrase, "кинематографичный")
-        now = datetime.now(TIMEZONE)
-        output_path = os.path.join(OUTPUT_DIR, f"goal_{now.strftime('%Y%m%d_%H%M%S')}.png")
+        img = render_image(photo_bytes, phrase)
 
-        success = await html_to_image(html, output_path)
-        return output_path if success else None
+        now = datetime.now(TIMEZONE)
+        output_path = os.path.join(OUTPUT_DIR, f"goal_{now.strftime('%Y%m%d_%H%M%S')}.jpg")
+        img.save(output_path, "JPEG", quality=92)
+
+        return output_path
 
     except Exception as e:
         logger.error(f"generate_goal_image error: {e}")

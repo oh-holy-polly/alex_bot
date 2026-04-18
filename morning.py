@@ -264,7 +264,7 @@ async def handle_morning_mood(update: Update, mood_text: str):
 # ───────────────────────────────────────────
 
 async def send_briefing(update: Update):
-    """Генерирует и отправляет утренний брифинг"""
+    """Генерирует и отправляет утренний брифинг + картинку"""
     try:
         set_state(KEY_BRIEFING_DONE, True)
         notion.refresh_all_caches()
@@ -289,6 +289,14 @@ async def send_briefing(update: Update):
             extra_instruction=extra
         )
         await update.message.reply_text(reply)
+
+        # Отправляем утреннюю картинку после брифинга
+        try:
+            from image_gen import send_morning_image
+            await send_morning_image(update.get_bot())
+        except Exception as e:
+            logger.error(f"send_morning_image error: {e}")
+            # Картинка не критична — молча пропускаем
 
     except Exception as e:
         logger.error(f"send_briefing error: {e}")
