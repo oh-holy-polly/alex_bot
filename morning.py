@@ -1,10 +1,10 @@
 """
 morning.py — всё утро:
-  - три будильника
-  - фото-контроль анти-зомби
-  - запись снов и настроения
-  - утренний брифинг
-  - социальный пинок
+- три будильника
+- фото-контроль анти-зомби
+- запись снов и настроения
+- утренний брифинг
+- социальный пинок
 """
 
 import logging
@@ -26,19 +26,18 @@ logger = logging.getLogger(__name__)
 
 # Задания для фото-контроля
 PHOTO_TASKS = [
-    ("зубную щётку",   "toothbrush"),
-    ("вид из окна",    "window view"),
+    ("зубную щётку", "toothbrush"),
+    ("вид из окна", "window view"),
     ("свои кроссовки", "sneakers"),
-    ("стакан воды",    "glass of water"),
+    ("стакан воды", "glass of water"),
 ]
 
 # Ключи состояния утра
-KEY_PHOTO_TASK     = "morning_photo_task"
-KEY_PHOTO_DONE     = "morning_photo_done"
+KEY_PHOTO_TASK    = "morning_photo_task"
+KEY_PHOTO_DONE    = "morning_photo_done"
 KEY_AWAITING_DREAMS = "awaiting_dreams"
-KEY_AWAITING_MOOD  = "awaiting_morning_mood"
-KEY_BRIEFING_DONE  = "morning_briefing_done"
-
+KEY_AWAITING_MOOD   = "awaiting_morning_mood"
+KEY_BRIEFING_DONE   = "morning_briefing_done"
 
 # ───────────────────────────────────────────
 # БУДИЛЬНИКИ
@@ -64,6 +63,7 @@ async def send_alarm(app: Application, attempt: int):
             f" Скажи доброе утро по-алексовски — коротко, живо, каждый раз по-новому."
             f" Не используй шаблоны. После этого я пришлю задание для фото-контроля."
         )
+
         text = ask_alex_system(instruction)
         await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=text)
 
@@ -87,6 +87,7 @@ async def send_photo_task(app: Application):
             f"Скажи это коротко и с характером, не как инструкция."
         )
         await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=text)
+
     except Exception as e:
         logger.error(f"send_photo_task error: {e}")
 
@@ -121,6 +122,7 @@ async def handle_morning_photo(update: Update, context: ContextTypes.DEFAULT_TYP
     """Полина прислала фото"""
     try:
         photo_done = get_state(KEY_PHOTO_DONE, False)
+
         if photo_done:
             # Фото уже было — просто обычное фото в чате
             reply = ask_alex("Полина прислала фото просто так", force_smart=False)
@@ -132,12 +134,12 @@ async def handle_morning_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text("Окей, фото получил")
             return
 
-        # Проверяем фото через Groq Vision
+        # Скачиваем фото как байты через Telegram
         photo = update.message.photo[-1]  # берём максимальное качество
         photo_file = await context.bot.get_file(photo.file_id)
-        photo_url = photo_file.file_path
+        photo_bytes = await photo_file.download_as_bytearray()
 
-        is_valid = await verify_photo(photo_url, expected_task)
+        is_valid = await verify_photo(bytes(photo_bytes), expected_task)
 
         if is_valid:
             set_state(KEY_PHOTO_DONE, True)
@@ -160,11 +162,16 @@ async def handle_morning_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Фото получил, но что-то пошло не так с проверкой")
 
 
-async def verify_photo(photo_url: str, expected_task: str) -> bool:
-    """Проверяет фото через Groq Vision"""
+async def verify_photo(photo_bytes: bytes, expected_task: str) -> bool:
+    """Проверяет фото через Groq Vision (base64)"""
+    import base64
     try:
         from groq import Groq
-        from config import GROQ_API_KEY, MODEL_FAST
+        from config import GROQ_API_KEY
+
+        # Кодируем фото в base64
+        b64_image = base64.b64encode(photo_bytes).decode("utf-8")
+        image_data_url = f"data:image/jpeg;base64,{b64_image}"
 
         client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
@@ -174,7 +181,7 @@ async def verify_photo(photo_url: str, expected_task: str) -> bool:
                 "content": [
                     {
                         "type": "image_url",
-                        "image_url": {"url": photo_url}
+                        "image_url": {"url": image_data_url}
                     },
                     {
                         "type": "text",
@@ -188,7 +195,9 @@ async def verify_photo(photo_url: str, expected_task: str) -> bool:
             }],
             max_tokens=10
         )
+
         answer = response.choices[0].message.content.strip().lower()
+        logger.info(f"Vision check for '{expected_task}': {answer}")
         return "да" in answer
 
     except Exception as e:
@@ -260,6 +269,7 @@ async def send_briefing(update: Update):
         set_state(KEY_BRIEFING_DONE, True)
         notion.refresh_all_caches()
         briefing_context = notion.get_briefing_context()
+
         phase = notion.get_cyclothymia_phase()
         cycle = notion.get_cycle_phase()
 
