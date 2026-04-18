@@ -16,7 +16,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from config import TIMEZONE, BASE_DIR
-from alex import ask_alex_system
+from alex import ask_alex_system, ask_alex_smart
 from notion_manager import notion
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ def generate_morning_phrase(phase: str, score: int, cycle_phase: str) -> str:
         f"— «Сегодня самый лучший день»\n"
         f"— «ПМС день 2. Ты справишься»"
     )
-    return ask_alex_system(instruction)
+    return ask_alex_smart(instruction)
 
 # ───────────────────────────────────────────
 # РЕНДЕР ЧЕРЕЗ PILLOW
@@ -255,7 +255,7 @@ async def generate_goal_image(goal_name: str) -> str | None:
         if not photo_bytes:
             return None
 
-        phrase = ask_alex_system(
+        phrase = ask_alex_smart(
             f"Полина сделала что-то важное в направлении цели: «{goal_name}». "
             f"Напиши одну фразу — что она на шаг ближе. "
             f"Максимум 6 слов, коротко, лично, без банальщины. Только текст."

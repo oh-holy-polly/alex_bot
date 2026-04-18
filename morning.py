@@ -19,7 +19,7 @@ from cache import (
     get_state, set_state,
     set_night_mode, get_day_mode
 )
-from alex import ask_alex, ask_alex_system
+from alex import ask_alex, ask_alex_system, ask_alex_smart
 from notion_manager import notion
 
 logger = logging.getLogger(__name__)
