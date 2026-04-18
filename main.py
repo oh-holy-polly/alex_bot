@@ -216,6 +216,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Детектор намерений ──
+    # Длинные сообщения (>100 символов) — это разговор, не команда
+    if len(user_message) > 100:
+        reply = ask_alex(user_message)
+        await update.message.reply_text(reply)
+        return
+
     msg_lower = user_message.lower()
 
     # Полина говорит что начинает задачу
