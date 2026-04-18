@@ -196,6 +196,21 @@ def ask_alex(
 
     except Exception as e:
         logger.error(f"Groq error: {e}")
+        # Пробуем извлечь retry-after из заголовков если это rate limit
+        retry_after = None
+        try:
+            if hasattr(e, "response") and e.response is not None:
+                retry_after = int(e.response.headers.get("retry-after", 0))
+        except Exception:
+            pass
+        if retry_after and retry_after > 0:
+            minutes = retry_after // 60
+            seconds = retry_after % 60
+            if minutes > 0:
+                wait_str = f"{minutes} мин {seconds} сек" if seconds else f"{minutes} мин"
+            else:
+                wait_str = f"{seconds} сек"
+            return f"Лимит Groq исчерпан. Обновится через {wait_str} — попробуй позже"
         return "Полина, что-то сломалось на моей стороне. Попробуй ещё раз"
 
 
