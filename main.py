@@ -1,33 +1,24 @@
 """
 main.py — точка входа, все Telegram handlers
-
-ИЗМЕНЕНИЯ v2:
-- Умный детектор намерений через LLM (вместо жёсткого keyword matching)
-- Намерения: task_start / task_done / task_stuck / no_ping / add_habit / 
-             habit_done / new_pattern / save_archive / suggest_event / 
-             new_idea / chat
-- Детектор вызывает быструю 8b модель, возвращает JSON
 """
 
 import logging
-import json
 import re
-import tempfile
-import os
 from datetime import datetime
+
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ContextTypes, CallbackQueryHandler
 )
+
 from config import TELEGRAM_TOKEN, USER_TELEGRAM_ID, TIMEZONE
 from cache import (
     init_db, get_night_mode, set_night_mode,
     get_active_task, set_active_task, get_day_mode
 )
-from alex import ask_alex, ask_alex_system, groq_client
+from alex import ask_alex, ask_alex_system
 from notion_manager import notion
-from intent_router import route_message
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -44,80 +35,13 @@ logger = logging.getLogger(__name__)
 # ───────────────────────────────────────────
 
 def is_polina(update: Update) -> bool:
+    """Бот работает только для Полины"""
     return update.effective_user.id == USER_TELEGRAM_ID
 
 def is_night() -> bool:
+    """Ночной режим — после 00:00 и до 06:00"""
     hour = datetime.now(TIMEZONE).hour
     return 0 <= hour < 6
-
-# ───────────────────────────────────────────
-# УМНЫЙ ДЕТЕКТОР НАМЕРЕНИЙ
-# ───────────────────────────────────────────
-
-INTENT_SYSTEM_PROMPT = """Ты — классификатор намерений. Определяешь что имеет в виду Полина.
-
-Верни ТОЛЬКО валидный JSON без пояснений и markdown:
-{"intent": "<intent>", "confidence": <0.0-1.0>}
-
-Возможные intent:
-- task_start     — начинает задачу / говорит что будет делать / собирается за что-то взяться
-- task_done      — говорит что закончила, сделала, готово, выполнила
-- task_stuck     — застряла, затупила, не может начать, завислa
-- no_ping        — просит не беспокоить, не пинговать, оставить в покое
-- add_habit      — хочет добавить привычку
-- habit_done     — отмечает что сделала привычку
-- new_pattern    — замечает паттерн поведения / триггер
-- save_archive   — просит сохранить/запомнить что-то
-- suggest_event  — скучно, куда пойти, что делать
-- new_idea       — пришла с новой идеей / планом / бизнес-идеей
-- chat           — просто разговаривает, всё остальное
-
-Примеры:
-"надо прошерстить файлы" → task_start
-"буду делать отчёт" → task_start
-"хочу разобрать почту" → task_start
-"всё, сделала" → task_done
-"застряла на введении" → task_stuck
-"не мешай мне" → no_ping
-"начну делать зарядку каждый день" → add_habit
-"сделала зарядку" → habit_done
-"я всегда откладываю когда устала" → new_pattern
-"запомни это упражнение" → save_archive
-"скучно" → suggest_event
-"придумала новый проект" → new_idea
-"как дела?" → chat
-"""
-
-def detect_intent(message: str) -> dict:
-    """
-    Вызывает быструю 8b модель чтобы понять намерение Полины.
-    Возвращает {"intent": str, "confidence": float}
-    """
-    try:
-        from groq import Groq
-        from config import GROQ_API_KEY, MODEL_FAST
-
-        client = Groq(api_key=GROQ_API_KEY)
-        response = client.chat.completions.create(
-            model=MODEL_FAST,
-            messages=[
-                {"role": "system", "content": INTENT_SYSTEM_PROMPT},
-                {"role": "user", "content": message}
-            ],
-            temperature=0.1,
-            max_tokens=60
-        )
-        raw = response.choices[0].message.content.strip()
-
-        # Чистим на случай если модель всё же добавила markdown
-        raw = re.sub(r"```json|```", "", raw).strip()
-        result = json.loads(raw)
-        logger.info(f"Intent: {result} | Message: {message[:50]}")
-        return result
-
-    except Exception as e:
-        logger.error(f"Intent detection error: {e}")
-        return {"intent": "chat", "confidence": 0.5}
 
 # ───────────────────────────────────────────
 # КОМАНДЫ
@@ -126,13 +50,14 @@ def detect_intent(message: str) -> dict:
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
-    reply = await ask_alex_system(
+    reply = ask_alex_system(
         "Полина только что запустила бота командой /start. "
         "Поздоровайся как Алекс — коротко, живо, без пафоса."
     )
     await update.message.reply_text(reply)
 
 async def cmd_awake(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полина проснулась — запускаем утренний ритуал"""
     if not is_polina(update):
         return
     set_night_mode(False)
@@ -140,6 +65,7 @@ async def cmd_awake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_awake(update, context)
 
 async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/mood 7 — быстро залогировать настроение"""
     if not is_polina(update):
         return
     args = context.args
@@ -152,7 +78,7 @@ async def cmd_mood(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     phase = notion.get_cyclothymia_phase()
     notion.log_mood(score=score, phase=phase)
-    reply = await ask_alex(
+    reply = ask_alex(
         f"Полина только что залогировала настроение {score}/10. Фаза: {phase}. "
         f"Отреагируй коротко и по-человечески.",
         force_smart=False
@@ -167,7 +93,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Целей нет. Это либо дзен, либо проблема😁")
         return
     goals_text = "\n".join(f"— {g['name']} ({g['priority']})" for g in goals)
-    reply = await ask_alex(
+    reply = ask_alex(
         f"Покажи Полине её активные цели и скажи что-нибудь острое:\n{goals_text}",
         force_smart=False
     )
@@ -190,13 +116,14 @@ async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text.strip())
 
 async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/task — показать текущую активную задачу"""
     if not is_polina(update):
         return
     task = get_active_task()
     if not task:
         await update.message.reply_text("Активной задачи нет. Скажи с чего начнёшь — и я засеку")
         return
-    reply = await ask_alex(
+    reply = ask_alex(
         f"Полина спросила про текущую задачу. Активная задача: {task.get('name')}. "
         f"Началась в {task.get('started_at')}. Спроси как дела.",
         force_smart=False
@@ -204,12 +131,13 @@ async def cmd_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply)
 
 async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/briefing — запросить утренний брифинг вручную"""
     if not is_polina(update):
         return
     await update.message.reply_text("Сейчас посмотрю что у нас на сегодня...")
     notion.refresh_all_caches()
     briefing_context = notion.get_briefing_context()
-    reply = await ask_alex(
+    reply = ask_alex(
         "Полина попросила брифинг вручную.",
         force_smart=True,
         extra_instruction=briefing_context
@@ -217,6 +145,7 @@ async def cmd_briefing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply)
 
 async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/done — задача выполнена"""
     if not is_polina(update):
         return
     task = get_active_task()
@@ -224,7 +153,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Нет активной задачи — нечего закрывать")
         return
     set_active_task(None)
-    reply = await ask_alex(
+    reply = ask_alex(
         f"Полина только что закрыла задачу: {task.get('name')}. "
         f"Отреагируй как Алекс — это победа, даже если небольшая.",
         force_smart=False
@@ -248,36 +177,77 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 # ───────────────────────────────────────────
+# ДЕТЕКТОР НАМЕРЕНИЙ
+# ───────────────────────────────────────────
+
+def _contains(msg: str, words: list) -> bool:
+    """Проверяет наличие любого из слов/фраз в сообщении"""
+    return any(w in msg for w in words)
+
+def detect_intent(msg: str) -> str:
+    """
+    Возвращает имя намерения по приоритету: от специфичных к общим.
+    Специфичные проверяются первыми — это защищает от ложных срабатываний.
+    """
+    m = msg.lower()
+
+    # ── УРОВЕНЬ 1: самые специфичные (составные фразы) ──
+
+    if _contains(m, ["добавь привычку", "новая привычка", "хочу добавить привычку"]):
+        return "add_habit"
+
+    if _contains(m, ["сделала привычку", "выполнила привычку", "отметь привычку",
+                     "сделала:", "выполнила:"]):
+        return "habit_done"
+
+    if _contains(m, ["заметила паттерн", "новый паттерн", "мой паттерн", "это триггер",
+                     "заметила триггер"]):
+        return "new_pattern"
+
+    if _contains(m, ["сохрани это", "запомни это", "добавь в архив", "классное задание"]):
+        return "save_archive"
+
+    if _contains(m, ["куда пойти", "что делать вечером", "хочу выйти куда-нибудь"]):
+        return "suggest_event"
+
+    # ── УРОВЕНЬ 2: завершение задачи — проверяем ДО «начала» ──
+    # (чтобы «закончила добавлять привычку» не улетело в task_done,
+    #  она уже поймана выше в add_habit)
+
+    if _contains(m, ["готово", "сделала", "закончила", "выполнила", "done"]):
+        # Только если есть активная задача — иначе это просто слово в разговоре
+        if get_active_task():
+            return "task_done"
+
+    # ── УРОВЕНЬ 3: начало задачи ──
+
+    if _contains(m, ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
+        return "task_start"
+
+    # ── УРОВЕНЬ 4: застряла — только конкретные формулировки ──
+    # убрали «не могу» — слишком широкий триггер
+
+    if _contains(m, ["затупила", "застряла", "не начала", "не могу начать",
+                     "не могу приступить", "завис", "зависла"]):
+        return "stuck"
+
+    # ── УРОВЕНЬ 5: «скучно» как отдельный триггер ──
+
+    if _contains(m, ["скучно", "не знаю чем заняться"]):
+        return "suggest_event"
+
+    return "chat"
+
+# ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
 # ───────────────────────────────────────────
 
-PROCESSED_MSGS = {}
-
-# ДОБАВЛЕН ПАРАМЕТР voice_text ДЛЯ ХИРУРГИЧЕСКОГО ИСПРАВЛЕНИЯ
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voice_text: str = None):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
 
-    # Защита от дублей (если Телеграм перепосылает сообщение из-за таймаута)
-    msg_id = update.message.message_id
-    now_ts = datetime.now().timestamp()
-    
-    # Используем глобальный словарь для надежности
-    if msg_id in PROCESSED_MSGS:
-        if now_ts - PROCESSED_MSGS[msg_id] < 60:
-            logger.warning(f"Duplicate message detected: {msg_id}, skipping.")
-            return
-    
-    PROCESSED_MSGS[msg_id] = now_ts
-    
-    # Очистка старых ID раз в 100 сообщений
-    if len(PROCESSED_MSGS) > 100:
-        for m_id in list(PROCESSED_MSGS.keys()):
-            if now_ts - PROCESSED_MSGS[m_id] > 300:
-                del PROCESSED_MSGS[m_id]
-
-    # ИСПОЛЬЗУЕМ ЛИБО ТЕКСТ ИЗ ГОЛОСА, ЛИБО ИЗ СООБЩЕНИЯ
-    user_message = voice_text if voice_text else update.message.text
+    user_message = update.message.text
+    hour = datetime.now(TIMEZONE).hour
 
     # ── Утренние состояния (сны, настроение) ──
     from morning import handle_morning_text
@@ -293,8 +263,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voi
     if is_night():
         if not get_night_mode():
             set_night_mode(True)
-          
-        night_reply = await ask_alex(
+        night_reply = ask_alex(
             user_message,
             force_smart=False,
             extra_instruction=(
@@ -305,62 +274,91 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, voi
         )
         await update.message.reply_text(night_reply)
         return
-    else:
-        # Если утро, сбрасываем ночной режим
-        if get_night_mode():
-            set_night_mode(False)
 
-    # ── Гибкий роутинг через intent_router ──
-    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
-    needs_clarification, action_results = route_message(user_message)
+    # ── Детектор намерений ──
+    intent = detect_intent(user_message)
 
-    if needs_clarification:
-        # Есть что-то требующее уточнения
-        clarify_context = "\n".join(needs_clarification)
-        reply = await ask_alex(
-            user_message,
-            force_smart=False,
-            extra_instruction=(
-                f"Результаты попытки записи в Notion:\n{clarify_context}\n\n"
-                f"Там где NOTION_CLARIFY — нужно переспросить Полину. "
-                f"Сделай это естественно, в стиле Алекса, одним вопросом."
-            )
+    if intent == "task_start":
+        await _handle_task_start(update, user_message)
+
+    elif intent == "task_done":
+        task = get_active_task()
+        set_active_task(None)
+        reply = ask_alex(
+            f"Полина закрыла задачу: {task.get('name')}. Отреагируй.",
+            force_smart=False
         )
         await update.message.reply_text(reply)
-        return
 
-    if action_results:
-        # Действия выполнены — Алекс подтверждает в своём стиле
-        actions_context = "\n".join(action_results)
-        reply = await ask_alex(
-            user_message,
-            force_smart=False,
-            extra_instruction=(
-                f"Ты только что выполнила следующие действия в Notion:\n{actions_context}\n\n"
-                f"Подтверди это Полине коротко и в стиле Алекса. "
-                f"Если было несколько действий — упомяни все. "
-                f"Если что-то не записалось (NOTION_ERROR) — скажи об этом честно."
-            )
+    elif intent == "stuck":
+        task = get_active_task()
+        task_info = f"Активная задача: {task.get('name')}" if task else "Активной задачи нет"
+        reply = ask_alex(
+            f"Полина говорит: «{user_message}». {task_info}. "
+            f"Помоги разобраться — спроси где именно застряла, не паникуй.",
+            force_smart=True
         )
         await update.message.reply_text(reply)
-        return
 
-    # ── Обычный разговор — просто Алекс ──
-    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
-    reply = ask_alex(user_message)
-    await update.message.reply_text(reply)
+    elif intent == "add_habit":
+        from habits import handle_add_habit_confirmed
+        await handle_add_habit_confirmed(update, user_message)
+
+    elif intent == "habit_done":
+        from habits import handle_habit_done
+        await handle_habit_done(update, user_message)
+
+    elif intent == "new_pattern":
+        from habits import handle_new_pattern
+        await handle_new_pattern(update, user_message)
+
+    elif intent == "save_archive":
+        await _handle_save_to_archive(update, user_message)
+
+    elif intent == "suggest_event":
+        from day import suggest_event
+        await suggest_event(update, context)
+
+    else:  # "chat"
+        reply = ask_alex(user_message)
+        await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
 # ───────────────────────────────────────────
 
+async def _handle_task_start(update: Update, user_message: str):
+    """Полина начинает задачу — запускаем цикл коучинга"""
+    reply = ask_alex(
+        f"Полина говорит: «{user_message}». "
+        f"Она начинает задачу. Зафиксируй это, оцени примерно сколько времени займёт "
+        f"на основе контекста, скажи когда заглянешь проверить. "
+        f"Коротко и по-человечески.",
+        force_smart=True
+    )
+    set_active_task({
+        "name": user_message,
+        "started_at": datetime.now(TIMEZONE).strftime("%H:%M")
+    })
+    await update.message.reply_text(reply)
+
+async def _handle_add_habit(update: Update, user_message: str):
+    """Добавляем привычку через диалог"""
+    reply = ask_alex(
+        f"Полина хочет добавить привычку: «{user_message}». "
+        f"Уточни название, частоту и уровень энергии — коротко, "
+        f"одним вопросом. Потом я добавлю в Notion.",
+        force_smart=False
+    )
+    await update.message.reply_text(reply)
+
 async def _handle_save_to_archive(update: Update, user_message: str):
+    """Сохраняем задание в архив"""
     notion.add_to_archive(
         title="Задание из чата",
         content=user_message,
         tags=["задание"]
     )
-    # УБРАН await, ТАК КАК ФУНКЦИЯ СИНХРОННАЯ
     reply = ask_alex(
         f"Полина попросила сохранить это в архив: «{user_message}». "
         f"Подтверди что сохранил — коротко.",
@@ -369,54 +367,11 @@ async def _handle_save_to_archive(update: Update, user_message: str):
     await update.message.reply_text(reply)
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка фото — для утреннего фото-контроля"""
     if not is_polina(update):
         return
     from morning import handle_morning_photo
     await handle_morning_photo(update, context)
-
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка голосовых сообщений через Groq Whisper"""
-    if not is_polina(update):
-        return
-    
-    await update.message.reply_text("🎙️")
-    
-    temp_path = None
-    try:
-        file = await context.bot.get_file(update.message.voice.file_id)
-        
-        # Скачиваем во временный файл
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as f:
-            temp_path = f.name
-        
-        # ОЖИДАЕМ завершения скачивания
-        await file.download_to_drive(temp_path)
-
-        # Транскрибация через Groq Whisper (синхронно, как в alex.py)
-        with open(temp_path, "rb") as audio_file:
-            transcript = groq_client.audio.transcriptions.create(
-                file=("voice.ogg", audio_file.read()),
-                model="whisper-large-v3",
-                response_format="verbose_json",
-            )
-        
-        text = transcript.text
-        logger.info(f"Voice → text: {text[:60]}...")
-        
-        if not text or len(text.strip()) < 2:
-            await update.message.reply_text("Не расслышал, попробуй ещё раз")
-            return
-
-        # ПЕРЕДАЕМ ТЕКСТ НАПРЯМУЮ В handle_message БЕЗ ПОДМЕНЫ АТРИБУТОВ
-        await handle_message(update, context, voice_text=text)
-        
-    except Exception as e:
-        logger.error(f"Voice error: {e}", exc_info=True)
-        await update.message.reply_text("Не расслышал, попробуй ещё раз")
-    finally:
-        # Всегда удаляем временный файл
-        if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
 
 # ───────────────────────────────────────────
 # ЗАПУСК
@@ -441,13 +396,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Текст
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.UpdateType.EDITED_MESSAGE,
-        handle_message
-    ))
-
-    # Голосовое сообщение
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Планировщик
     from scheduler import setup_scheduler
