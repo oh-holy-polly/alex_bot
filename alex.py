@@ -59,7 +59,9 @@ def choose_model(message: str, force_smart: bool = False) -> str:
     if any(trigger in msg_lower for trigger in SMART_TRIGGERS):
         return MODEL_SMART
 
-    if len(message) > 200:
+    # ТОЧЕЧНОЕ ИСПРАВЛЕНИЕ 1: Уменьшаем порог для включения умной модели (было 200)
+    # Это вернет Алексу интеллект в обычных диалогах.
+    if len(message) > 100:
         return MODEL_SMART
 
     return MODEL_FAST
@@ -71,8 +73,6 @@ def choose_model(message: str, force_smart: bool = False) -> str:
 def build_context() -> str:
     """
     Собирает динамический контекст из кэша Notion.
-    Подставляется в конец system prompt перед каждым запросом.
-    Компактно — только самое нужное.
     """
     now = datetime.now(TIMEZONE)
 
@@ -93,10 +93,13 @@ def build_context() -> str:
     if cycle:
         lines.append(f"Фаза цикла: {cycle.get('phase', '?')}, день {cycle.get('day', '?')}")
 
-    # Активная задача
+    # ТОЧЕЧНОЕ ИСПРАВЛЕНИЕ 2: Убираем галлюцинации с задачами.
+    # Если задачи нет, мы ЯВНО пишем об этом, чтобы LLM не выдумывала её.
     active_task = get_active_task()
-    if active_task:
-        lines.append(f"Активная задача: {active_task.get('name', '?')} (начата в {active_task.get('started_at', '?')})")
+    if active_task and active_task.get('name'):
+        lines.append(f"Активная задача: {active_task.get('name')} (начата в {active_task.get('started_at', '?')})")
+    else:
+        lines.append("Активной задачи сейчас НЕТ. Не упоминай задачи, если Полина не спросит о них.")
 
     # События сегодня
     events = get_cache("today_events")
@@ -136,15 +139,6 @@ def ask_alex(
     save_history: bool = True,
     extra_instruction: str = ""
 ) -> str:
-    """
-    Главная функция — отправляет сообщение Алексу и возвращает ответ.
-
-    user_message — то что написала Полина
-    force_smart — принудительно использовать 70b
-    save_history — сохранять в историю (False для системных вызовов)
-    extra_instruction — дополнительная инструкция в конец system prompt
-                        (например: "Это утренний брифинг. Выбери режим дня.")
-    """
     try:
         model = choose_model(user_message, force_smart)
 
@@ -154,10 +148,10 @@ def ask_alex(
 
         if extra_instruction:
             full_system += f"\n\n{extra_instruction}"
-            # Напоминаем про характер, если пришла системная инструкция, чтобы не стал "роботом"
             full_system += "\nKeep your personality: sarcastic, mix Russian/English, no boring helper talk."
 
-        history = get_history(limit=10)  # было 20
+        # ТОЧЕЧНОЕ ИСПРАВЛЕНИЕ 3: Немного снижаем температуру для более точных ответов (было 0.85)
+        history = get_history(limit=10)
         messages = [{"role": "system", "content": full_system}]
         messages += history
         messages.append({"role": "user", "content": user_message})
@@ -166,17 +160,16 @@ def ask_alex(
             response = groq_client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.85,
+                temperature=0.75,
                 max_tokens=600
             )
         except Exception as groq_err:
-            # Если умная модель упала — пробуем быструю
             if model == MODEL_SMART:
                 logger.warning(f"Smart model failed ({groq_err}), falling back to fast model")
                 response = groq_client.chat.completions.create(
                     model=MODEL_FAST,
                     messages=messages,
-                    temperature=0.85,
+                    temperature=0.75,
                     max_tokens=600
                 )
             else:
@@ -195,13 +188,7 @@ def ask_alex(
         logger.error(f"Groq error: {e}")
         return "Полина, что-то сломалось на моей стороне. Попробуй ещё раз"
 
-
 def ask_alex_system(instruction: str) -> str:
-    """
-    Вызов без пользовательского сообщения — для системных задач.
-    Например: сгенерировать утреннее приветствие, титул награды и т.д.
-    Не сохраняет в историю диалога.
-    """
     return ask_alex(
         user_message=instruction,
         force_smart=True,
