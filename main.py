@@ -106,7 +106,7 @@ async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not habits:
         await update.message.reply_text("Привычек нет. Добавь: «Алекс, добавь привычку пить воду»")
         return
-    done = [h["name"] for h in habits if h["done_today"]]
+    done    = [h["name"] for h in habits if h["done_today"]]
     pending = [h["name"] for h in habits if not h["done_today"]]
     text = ""
     if done:
@@ -177,68 +177,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 # ───────────────────────────────────────────
-# ДЕТЕКТОР НАМЕРЕНИЙ
-# ───────────────────────────────────────────
-
-def _contains(msg: str, words: list) -> bool:
-    """Проверяет наличие любого из слов/фраз в сообщении"""
-    return any(w in msg for w in words)
-
-def detect_intent(msg: str) -> str:
-    """
-    Возвращает имя намерения по приоритету: от специфичных к общим.
-    Специфичные проверяются первыми — это защищает от ложных срабатываний.
-    """
-    m = msg.lower()
-
-    # ── УРОВЕНЬ 1: самые специфичные (составные фразы) ──
-
-    if _contains(m, ["добавь привычку", "новая привычка", "хочу добавить привычку"]):
-        return "add_habit"
-
-    if _contains(m, ["сделала привычку", "выполнила привычку", "отметь привычку",
-                     "сделала:", "выполнила:"]):
-        return "habit_done"
-
-    if _contains(m, ["заметила паттерн", "новый паттерн", "мой паттерн", "это триггер",
-                     "заметила триггер"]):
-        return "new_pattern"
-
-    if _contains(m, ["сохрани это", "запомни это", "добавь в архив", "классное задание"]):
-        return "save_archive"
-
-    if _contains(m, ["куда пойти", "что делать вечером", "хочу выйти куда-нибудь"]):
-        return "suggest_event"
-
-    # ── УРОВЕНЬ 2: завершение задачи — проверяем ДО «начала» ──
-    # (чтобы «закончила добавлять привычку» не улетело в task_done,
-    #  она уже поймана выше в add_habit)
-
-    if _contains(m, ["готово", "сделала", "закончила", "выполнила", "done"]):
-        # Только если есть активная задача — иначе это просто слово в разговоре
-        if get_active_task():
-            return "task_done"
-
-    # ── УРОВЕНЬ 3: начало задачи ──
-
-    if _contains(m, ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
-        return "task_start"
-
-    # ── УРОВЕНЬ 4: застряла — только конкретные формулировки ──
-    # убрали «не могу» — слишком широкий триггер
-
-    if _contains(m, ["затупила", "застряла", "не начала", "не могу начать",
-                     "не могу приступить", "завис", "зависла"]):
-        return "stuck"
-
-    # ── УРОВЕНЬ 5: «скучно» как отдельный триггер ──
-
-    if _contains(m, ["скучно", "не знаю чем заняться"]):
-        return "suggest_event"
-
-    return "chat"
-
-# ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
 # ───────────────────────────────────────────
 
@@ -247,6 +185,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_message = update.message.text
+
     hour = datetime.now(TIMEZONE).hour
 
     # ── Утренние состояния (сны, настроение) ──
@@ -263,6 +202,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_night():
         if not get_night_mode():
             set_night_mode(True)
+        # После полуночи Алекс отвечает скучно или молчит
         night_reply = ask_alex(
             user_message,
             force_smart=False,
@@ -276,21 +216,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ── Детектор намерений ──
-    intent = detect_intent(user_message)
+    msg_lower = user_message.lower()
 
-    if intent == "task_start":
+    # Полина говорит что начинает задачу
+    if any(w in msg_lower for w in ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
         await _handle_task_start(update, user_message)
+        return
 
-    elif intent == "task_done":
+    # Полина говорит что задача готова
+    if any(w in msg_lower for w in ["готово", "сделала", "закончила", "выполнила", "done"]):
         task = get_active_task()
-        set_active_task(None)
-        reply = ask_alex(
-            f"Полина закрыла задачу: {task.get('name')}. Отреагируй.",
-            force_smart=False
-        )
-        await update.message.reply_text(reply)
+        if task:
+            set_active_task(None)
+            reply = ask_alex(
+                f"Полина закрыла задачу: {task.get('name')}. Отреагируй.",
+                force_smart=False
+            )
+            await update.message.reply_text(reply)
+            return
 
-    elif intent == "stuck":
+    # Полина говорит что затупила / не начала
+    if any(w in msg_lower for w in ["затупила", "застряла", "не начала", "не могу", "завис"]):
         task = get_active_task()
         task_info = f"Активная задача: {task.get('name')}" if task else "Активной задачи нет"
         reply = ask_alex(
@@ -299,29 +245,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             force_smart=True
         )
         await update.message.reply_text(reply)
+        return
 
-    elif intent == "add_habit":
+    # Полина хочет добавить привычку
+    if any(w in msg_lower for w in ["добавь привычку", "новая привычка", "буду делать", "начну делать"]):
         from habits import handle_add_habit_confirmed
         await handle_add_habit_confirmed(update, user_message)
+        return
 
-    elif intent == "habit_done":
+    # Полина выполнила привычку
+    if any(w in msg_lower for w in ["сделала привычку", "выполнила привычку", "отметь привычку", "сделала:", "выполнила:"]):
         from habits import handle_habit_done
         await handle_habit_done(update, user_message)
+        return
 
-    elif intent == "new_pattern":
+    # Полина заметила паттерн
+    if any(w in msg_lower for w in ["заметила паттерн", "новый паттерн", "мой паттерн", "триггер"]):
         from habits import handle_new_pattern
         await handle_new_pattern(update, user_message)
+        return
 
-    elif intent == "save_archive":
+    # Полина делится заданием / упражнением для архива
+    if any(w in msg_lower for w in ["сохрани", "запомни это", "добавь в архив", "классное задание"]):
         await _handle_save_to_archive(update, user_message)
+        return
 
-    elif intent == "suggest_event":
+    # Полина хочет куда-то пойти / скучно
+    if any(w in msg_lower for w in ["куда пойти", "что делать вечером", "скучно", "хочу выйти"]):
         from day import suggest_event
         await suggest_event(update, context)
+        return
 
-    else:  # "chat"
-        reply = ask_alex(user_message)
-        await update.message.reply_text(reply)
+    # Обычный разговор
+    reply = ask_alex(user_message)
+    await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
@@ -336,6 +293,7 @@ async def _handle_task_start(update: Update, user_message: str):
         f"Коротко и по-человечески.",
         force_smart=True
     )
+    # Извлекаем название задачи простым способом — сохраняем сообщение
     set_active_task({
         "name": user_message,
         "started_at": datetime.now(TIMEZONE).strftime("%H:%M")
@@ -373,27 +331,64 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from morning import handle_morning_photo
     await handle_morning_photo(update, context)
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Голосовое сообщение — транскрибируем через Groq Whisper и передаём в handle_message"""
+    if not is_polina(update):
+        return
+    try:
+        voice_file = await context.bot.get_file(update.message.voice.file_id)
+        voice_bytes = await voice_file.download_as_bytearray()
+
+        from groq import Groq
+        from config import GROQ_API_KEY
+        client = Groq(api_key=GROQ_API_KEY)
+
+        transcription = client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=("voice.ogg", bytes(voice_bytes)),
+            language="ru"
+        )
+        text = transcription.text.strip()
+
+        if not text:
+            await update.message.reply_text("Не расслышал, попробуй ещё раз")
+            return
+
+        logger.info(f"Voice transcribed: {text[:80]}...")
+
+        # Подменяем message.text и прогоняем через обычный обработчик
+        update.message.text = text
+        await handle_message(update, context)
+
+    except Exception as e:
+        logger.error(f"handle_voice error: {e}")
+        await update.message.reply_text("Не расслышал, попробуй ещё раз")
+
 # ───────────────────────────────────────────
 # ЗАПУСК
 # ───────────────────────────────────────────
 
 def main():
     init_db()
+
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
     # Команды
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("awake", cmd_awake))
-    app.add_handler(CommandHandler("mood", cmd_mood))
-    app.add_handler(CommandHandler("goals", cmd_goals))
-    app.add_handler(CommandHandler("habits", cmd_habits))
-    app.add_handler(CommandHandler("task", cmd_task))
+    app.add_handler(CommandHandler("start",    cmd_start))
+    app.add_handler(CommandHandler("awake",    cmd_awake))
+    app.add_handler(CommandHandler("mood",     cmd_mood))
+    app.add_handler(CommandHandler("goals",    cmd_goals))
+    app.add_handler(CommandHandler("habits",   cmd_habits))
+    app.add_handler(CommandHandler("task",     cmd_task))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
-    app.add_handler(CommandHandler("done", cmd_done))
-    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("done",     cmd_done))
+    app.add_handler(CommandHandler("help",     cmd_help))
 
     # Фото
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Голосовые
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     # Текст
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
