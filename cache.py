@@ -1,8 +1,8 @@
 """
 cache.py — SQLite кэш для:
-  1. История диалога (последние N сообщений)
-  2. Кэш данных из Notion (обновляется раз в 15 мин)
-  3. Состояние бота (режим дня, активная задача, время будильника)
+1. История диалога (последние N сообщений)
+2. Кэш данных из Notion (обновляется раз в 15 мин)
+3. Состояние бота (режим дня, активная задача, время будильника)
 """
 
 import sqlite3
@@ -13,37 +13,34 @@ from config import DB_PATH, TIMEZONE
 
 logger = logging.getLogger(__name__)
 
-
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def init_db():
     """Создаёт таблицы если их нет"""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                role      TEXT NOT NULL,
-                content   TEXT NOT NULL,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS notion_cache (
-                key        TEXT PRIMARY KEY,
-                value      TEXT NOT NULL,
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS state (
-                key   TEXT PRIMARY KEY,
+                key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
         """)
     logger.info("DB initialized")
-
 
 # ───────────────────────────────────────────
 # ИСТОРИЯ ДИАЛОГА
@@ -64,7 +61,6 @@ def add_message(role: str, content: str):
             )
         """)
 
-
 def get_history(limit: int = 20) -> list:
     """Возвращает последние N сообщений для передачи в Groq"""
     with get_conn() as conn:
@@ -74,12 +70,10 @@ def get_history(limit: int = 20) -> list:
         ).fetchall()
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
-
 def clear_history():
     """Очищает историю (на случай если что-то пошло не так)"""
     with get_conn() as conn:
         conn.execute("DELETE FROM messages")
-
 
 # ───────────────────────────────────────────
 # КЭШ NOTION
@@ -87,16 +81,16 @@ def clear_history():
 
 CACHE_TTL_MINUTES = 15
 
-
 def set_cache(key: str, value):
-    """Сохраняет данные в кэш"""
+    """Сохраняет данные в кэш. None игнорируется — для инвалидации используй invalidate_cache()"""
+    if value is None:  # FIX: не сохраняем None как валидную запись
+        return
     now = datetime.now(TIMEZONE).isoformat()
     with get_conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO notion_cache (key, value, updated_at) VALUES (?, ?, ?)",
             (key, json.dumps(value, ensure_ascii=False), now)
         )
-
 
 def get_cache(key: str):
     """
@@ -118,7 +112,6 @@ def get_cache(key: str):
 
     return json.loads(row["value"])
 
-
 def invalidate_cache(key: str = None):
     """Сбрасывает кэш (конкретный ключ или весь)"""
     with get_conn() as conn:
@@ -126,7 +119,6 @@ def invalidate_cache(key: str = None):
             conn.execute("DELETE FROM notion_cache WHERE key = ?", (key,))
         else:
             conn.execute("DELETE FROM notion_cache")
-
 
 # ───────────────────────────────────────────
 # СОСТОЯНИЕ БОТА
@@ -140,7 +132,6 @@ def set_state(key: str, value):
             (key, json.dumps(value, ensure_ascii=False))
         )
 
-
 def get_state(key: str, default=None):
     """Возвращает состояние по ключу"""
     with get_conn() as conn:
@@ -150,7 +141,6 @@ def get_state(key: str, default=None):
     if not row:
         return default
     return json.loads(row["value"])
-
 
 # Удобные обёртки для часто используемых состояний
 

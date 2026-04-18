@@ -11,12 +11,13 @@ import pytz
 from notion_client import Client
 
 from config import NOTION_TOKEN, NOTION_DATABASES, TIMEZONE
-from cache import set_cache, get_cache
+from cache import set_cache, get_cache, invalidate_cache  # FIX: добавлен импорт invalidate_cache
 
 logger = logging.getLogger(__name__)
 
 
 class NotionManager:
+
     def __init__(self):
         self.client = Client(auth=NOTION_TOKEN)
         self.db = NOTION_DATABASES
@@ -72,9 +73,9 @@ class NotionManager:
             now = datetime.now(TIMEZONE)
             props = {
                 "Запись": {"title": [{"text": {"content": f"Запись {now.strftime('%d.%m %H:%M')}"}}]},
-                "Дата":   {"date": {"start": now.isoformat()}},
+                "Дата": {"date": {"start": now.isoformat()}},
                 "Настроение": {"number": score},
-                "Фаза":   {"select": {"name": phase}},
+                "Фаза": {"select": {"name": phase}},
                 "Энергия": {"select": {"name": energy}},
             }
             if dreams:
@@ -86,9 +87,11 @@ class NotionManager:
                 parent={"database_id": self.db["mood"]},
                 properties=props
             )
-            invalidate_and_refresh = ["recent_mood", "cycle_phase"]
-            for key in invalidate_and_refresh:
-                set_cache(key, None)  # сбросим чтобы перечитать
+
+            # FIX: используем invalidate_cache вместо set_cache(key, None)
+            invalidate_cache("recent_mood")
+            invalidate_cache("cycle_phase")
+
             logger.info(f"Mood logged: {score}/10")
             return resp["id"]
         except Exception as e:
@@ -111,8 +114,8 @@ class NotionManager:
             moods = []
             for p in resp["results"]:
                 moods.append({
-                    "id":    p["id"],
-                    "date":  self._date(p),
+                    "id": p["id"],
+                    "date": self._date(p),
                     "score": self._number(p, "Настроение"),
                     "phase": self._select(p, "Фаза"),
                     "energy": self._select(p, "Энергия"),
@@ -188,12 +191,12 @@ class NotionManager:
             events = []
             for p in resp["results"]:
                 events.append({
-                    "id":       p["id"],
-                    "name":     self._title(p),
-                    "date":     self._date(p),
-                    "status":   self._select(p, "Статус"),
+                    "id": p["id"],
+                    "name": self._title(p),
+                    "date": self._date(p),
+                    "status": self._select(p, "Статус"),
                     "category": self._select(p, "Категория"),
-                    "energy":   self._select(p, "Энергозатратность"),
+                    "energy": self._select(p, "Энергозатратность"),
                     "plan_time": self._number(p, "План времени"),
                 })
             set_cache("today_events", events)
@@ -245,7 +248,7 @@ class NotionManager:
                 parent={"database_id": self.db["events"]},
                 properties=props
             )
-            set_cache("today_events", None)
+            invalidate_cache("today_events")  # FIX: invalidate вместо set_cache(None)
             return resp["id"]
         except Exception as e:
             logger.error(f"add_event error: {e}")
@@ -269,11 +272,11 @@ class NotionManager:
             goals = []
             for p in resp["results"]:
                 goals.append({
-                    "id":       p["id"],
-                    "name":     self._title(p, "Цель"),
+                    "id": p["id"],
+                    "name": self._title(p, "Цель"),
                     "priority": self._select(p, "Приоритет"),
                     "deadline": self._date(p, "Дедлайн"),
-                    "status":   self._select(p, "Статус цели"),
+                    "status": self._select(p, "Статус цели"),
                 })
             set_cache("active_goals", goals)
             return goals
@@ -300,12 +303,12 @@ class NotionManager:
             for p in resp["results"]:
                 last_done = self._date(p, "Последний раз")
                 habits.append({
-                    "id":          p["id"],
-                    "name":        self._title(p, "Привычка"),
-                    "frequency":   self._select(p, "Частота"),
-                    "energy":      self._select(p, "Уровень энергии"),
-                    "last_done":   last_done,
-                    "done_today":  last_done.startswith(today) if last_done else False,
+                    "id": p["id"],
+                    "name": self._title(p, "Привычка"),
+                    "frequency": self._select(p, "Частота"),
+                    "energy": self._select(p, "Уровень энергии"),
+                    "last_done": last_done,
+                    "done_today": last_done.startswith(today) if last_done else False,
                 })
             set_cache("habits", habits)
             return habits
@@ -319,11 +322,11 @@ class NotionManager:
                 parent={"database_id": self.db["habits"]},
                 properties={
                     "Привычка": {"title": [{"text": {"content": name}}]},
-                    "Частота":  {"select": {"name": frequency}},
+                    "Частота": {"select": {"name": frequency}},
                     "Уровень энергии": {"select": {"name": energy}},
                 }
             )
-            set_cache("habits", None)
+            invalidate_cache("habits")  # FIX: invalidate вместо set_cache(None)
             return resp["id"]
         except Exception as e:
             logger.error(f"add_habit error: {e}")
@@ -337,7 +340,7 @@ class NotionManager:
                 page_id=habit_id,
                 properties={"Последний раз": {"date": {"start": today}}}
             )
-            set_cache("habits", None)
+            invalidate_cache("habits")  # FIX: invalidate вместо set_cache(None)
             return True
         except Exception as e:
             logger.error(f"mark_habit_done error: {e}")
@@ -360,8 +363,8 @@ class NotionManager:
             patterns = []
             for p in resp["results"]:
                 patterns.append({
-                    "id":      p["id"],
-                    "name":    self._title(p, "Название паттерна"),
+                    "id": p["id"],
+                    "name": self._title(p, "Название паттерна"),
                     "trigger": self._text(p, "Триггер"),
                     "signals": self._text(p, "Сигналы"),
                 })
@@ -381,7 +384,7 @@ class NotionManager:
                     "Сигналы": {"rich_text": [{"text": {"content": signals}}]},
                 }
             )
-            set_cache("patterns", None)
+            invalidate_cache("patterns")  # FIX: invalidate вместо set_cache(None)
             return resp["id"]
         except Exception as e:
             logger.error(f"add_pattern error: {e}")
@@ -397,8 +400,8 @@ class NotionManager:
             resp = self.client.pages.create(
                 parent={"database_id": self.db["ideas"]},
                 properties={
-                    "Идея":    {"title": [{"text": {"content": idea}}]},
-                    "Статус":  {"select": {"name": "На проверке (48ч)"}},
+                    "Идея": {"title": [{"text": {"content": idea}}]},
+                    "Статус": {"select": {"name": "На проверке (48ч)"}},
                     "Контекст": {"rich_text": [{"text": {"content": context}}]},
                 }
             )
@@ -434,6 +437,7 @@ class NotionManager:
             }
             if tags:
                 props["Теги"] = {"multi_select": [{"name": t} for t in tags]}
+
             resp = self.client.pages.create(
                 parent={"database_id": self.db["archive"]},
                 properties=props
@@ -496,7 +500,7 @@ class NotionManager:
                 role = self._select(p, "Роль")
                 if role in ("Близкие", "SOS-контакт"):
                     contacts.append({
-                        "id":   p["id"],
+                        "id": p["id"],
                         "name": self._title(p, "Имя"),
                         "role": role,
                         "context": self._text(p, "Контекст"),
@@ -516,26 +520,26 @@ class NotionManager:
 
     def refresh_all_caches(self):
         """
-        Обновляет все кэши разом.
+        Обновляет все кэши атомарно — без предварительного сброса всего разом.
+        Старые данные остаются доступны до момента замены новыми (нет окна с пустым контекстом).
         Вызывается раз в 15 минут через планировщик.
         """
-        # Сбрасываем кэши перед обновлением
-        keys_to_refresh = [
-            "recent_mood", "cycle_phase", "today_events", 
-            "upcoming_events", "active_goals", "habits", "patterns"
+        keys_and_methods = [
+            ("recent_mood",     self.get_recent_mood),
+            ("cycle_phase",     self.get_cycle_phase),
+            ("today_events",    self.get_today_events),
+            ("upcoming_events", self.get_upcoming_events),
+            ("active_goals",    self.get_active_goals),
+            ("habits",          self.get_habits),
+            ("patterns",        self.get_patterns),
         ]
-        for key in keys_to_refresh:
-            set_cache(key, None)
 
-        # Последовательно вызываем методы, которые теперь будут делать свежие запросы
-        self.get_recent_mood()
-        self.get_cycle_phase()
-        self.get_today_events()
-        self.get_upcoming_events()
-        self.get_active_goals()
-        self.get_habits()
-        self.get_patterns()
-        logger.info("All Notion caches refreshed with fresh data")
+        for key, method in keys_and_methods:
+            invalidate_cache(key)  # удаляем старую запись
+            method()               # сразу читаем — кэш заполняется внутри метода
+            logger.info(f"Cache refreshed: {key}")
+
+        logger.info("All Notion caches refreshed")
 
     def get_briefing_context(self) -> str:
         """
