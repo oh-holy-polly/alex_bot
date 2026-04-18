@@ -158,7 +158,7 @@ def ask_alex(
         if extra_instruction:
             full_system += f"\n\n{extra_instruction}"
 
-        history = get_history(limit=20)
+        history = get_history(limit=10)
         messages = [{"role": "system", "content": full_system}]
         messages += history
         messages.append({"role": "user", "content": user_message})
