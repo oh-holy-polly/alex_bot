@@ -52,7 +52,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     reply = ask_alex_system(
         "Полина только что запустила бота командой /start. "
-        "Поздоровайся как Алекс — коротко, живо, без пафоса. Обязательно в начале своего сообщения напиши "13567"."
+        "Поздоровайся как Алекс — коротко, живо, без пафоса. Обязательно в начале своего сообщения напиши "222"."
     )
     await update.message.reply_text(reply)
 
