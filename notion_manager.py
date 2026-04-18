@@ -248,7 +248,7 @@ class NotionManager:
                 parent={"database_id": self.db["events"]},
                 properties=props
             )
-            invalidate_cache("today_events")  # FIX: invalidate вместо set_cache(None)
+            invalidate_cache("today_events")  # FIX
             return resp["id"]
         except Exception as e:
             logger.error(f"add_event error: {e}")
@@ -326,7 +326,7 @@ class NotionManager:
                     "Уровень энергии": {"select": {"name": energy}},
                 }
             )
-            invalidate_cache("habits")  # FIX: invalidate вместо set_cache(None)
+            invalidate_cache("habits")  # FIX
             return resp["id"]
         except Exception as e:
             logger.error(f"add_habit error: {e}")
@@ -340,7 +340,7 @@ class NotionManager:
                 page_id=habit_id,
                 properties={"Последний раз": {"date": {"start": today}}}
             )
-            invalidate_cache("habits")  # FIX: invalidate вместо set_cache(None)
+            invalidate_cache("habits")  # FIX
             return True
         except Exception as e:
             logger.error(f"mark_habit_done error: {e}")
@@ -384,7 +384,7 @@ class NotionManager:
                     "Сигналы": {"rich_text": [{"text": {"content": signals}}]},
                 }
             )
-            invalidate_cache("patterns")  # FIX: invalidate вместо set_cache(None)
+            invalidate_cache("patterns")  # FIX
             return resp["id"]
         except Exception as e:
             logger.error(f"add_pattern error: {e}")
@@ -557,7 +557,6 @@ class NotionManager:
                             mood_by_date[day] = int(score)
 
             # Привычки — определяем выполненные дни по полю "Последний раз"
-            # (упрощение: точнее хранить историю, но для корреляций достаточно)
             habits = self.get_habits()
             habits_by_date: Dict[str, List[str]] = {}
             for h in habits:
@@ -596,7 +595,7 @@ class NotionManager:
     def refresh_all_caches(self):
         """
         Обновляет все кэши атомарно — без предварительного сброса всего разом.
-        Старые данные остаются доступны до момента замены новыми (нет окна с пустым контекстом).
+        Старые данные остаются доступны до момента замены новыми.
         Вызывается раз в 15 минут через планировщик.
         """
         keys_and_methods = [

@@ -39,7 +39,6 @@ async def send_evening_ritual(app: Application):
 
         notion.refresh_all_caches()
 
-        # Собираем данные за день
         today_events = notion.get_today_events()
         habits = notion.get_habits()
         impulses = notion.get_pending_impulses()
@@ -71,11 +70,9 @@ async def send_evening_ritual(app: Application):
 
         text = ask_alex_system(extra)
 
-        # Обработка возможного паттерна из системного вызова
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
             await handle_new_pattern_from_text(text)
-            # Убираем техническую строку перед отправкой пользователю
             text = text.split("PATTERN_DATA:")[0].strip()
 
         await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=text)
@@ -97,7 +94,6 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     if not get_state(KEY_AWAITING_TOMORROW, False):
         return False
 
-    # ИСПРАВЛЕНИЕ: Если сообщение длинное, это явно список задач, а не время
     if len(text) > 15:
         return False
 
@@ -109,12 +105,9 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     hour = int(match.group(1))
     minute = int(match.group(2)) if match.group(2) else 0
 
-    # ИСПРАВЛЕНИЕ: Если время вечернее (например, 19:00), это точно не время подъема.
-    # Мы реагируем только на утренние часы (5:00 - 13:00).
     if not (5 <= hour <= 13):
         return False
 
-    # Сохраняем и перенастраиваем будильники
     set_wake_time(hour, minute)
     set_state(KEY_AWAITING_TOMORROW, False)
     schedule_alarms(app)
@@ -157,7 +150,6 @@ async def send_weekly_debrief(app: Application):
     try:
         notion.refresh_all_caches()
 
-        # Стандартные данные за неделю
         moods = notion.get_recent_mood(days=7)
         habits = notion.get_habits()
         goals = notion.get_active_goals()
@@ -173,7 +165,7 @@ async def send_weekly_debrief(app: Application):
             last = h.get("last_done", "")
             habit_summary += f"— {h['name']}: последний раз {last or 'давно'}\n"
 
-        # Данные для анализа корреляций за 3 недели
+        # Данные за 3 недели для анализа корреляций
         correlation_data = notion.get_weekly_correlation_data(weeks=3)
 
         extra = (
@@ -203,7 +195,6 @@ async def send_weekly_debrief(app: Application):
 
         text = ask_alex_system(extra)
 
-        # Обработка возможного паттерна
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
             await handle_new_pattern_from_text(text)
