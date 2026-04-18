@@ -4,6 +4,8 @@ main.py — точка входа, все Telegram handlers
 
 import logging
 import re
+import os
+import tempfile
 from datetime import datetime
 
 from telegram import Update
@@ -210,12 +212,9 @@ def detect_intent(msg: str) -> str:
     if _contains(m, ["куда пойти", "что делать вечером", "хочу выйти куда-нибудь"]):
         return "suggest_event"
 
-    # ── УРОВЕНЬ 2: завершение задачи — проверяем ДО «начала» ──
-    # (чтобы «закончила добавлять привычку» не улетело в task_done,
-    #  она уже поймана выше в add_habit)
+    # ── УРОВЕНЬ 2: завершение задачи ──
 
     if _contains(m, ["готово", "сделала", "закончила", "выполнила", "done"]):
-        # Только если есть активная задача — иначе просто слово в разговоре
         if get_active_task():
             return "task_done"
 
@@ -224,8 +223,7 @@ def detect_intent(msg: str) -> str:
     if _contains(m, ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
         return "task_start"
 
-    # ── УРОВЕНЬ 4: застряла — только конкретные формулировки ──
-    # убрали голое «не могу» — слишком широкий триггер
+    # ── УРОВЕНЬ 4: застряла ──
 
     if _contains(m, ["затупила", "застряла", "не начала", "не могу начать",
                      "не могу приступить", "завис", "зависла"]):
@@ -237,6 +235,68 @@ def detect_intent(msg: str) -> str:
         return "suggest_event"
 
     return "chat"
+
+# ───────────────────────────────────────────
+# ТРАНСКРИПЦИЯ ГОЛОСОВЫХ
+# ───────────────────────────────────────────
+
+async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """
+    Скачивает голосовое сообщение и транскрибирует через Groq Whisper.
+    Возвращает текст или None если не удалось.
+    """
+    try:
+        from groq import Groq
+        from config import GROQ_API_KEY
+
+        voice = update.message.voice
+        file = await context.bot.get_file(voice.file_id)
+
+        # Скачиваем во временный файл
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        await file.download_to_drive(tmp_path)
+
+        # Транскрибируем через Whisper
+        client = Groq(api_key=GROQ_API_KEY)
+        with open(tmp_path, "rb") as audio_file:
+            transcription = client.audio.transcriptions.create(
+                file=("voice.ogg", audio_file),
+                model="whisper-large-v3-turbo",
+                language="ru",
+                response_format="text"
+            )
+
+        os.unlink(tmp_path)  # удаляем временный файл
+
+        text = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
+        logger.info(f"Voice transcribed: {text[:50]}...")
+        return text
+
+    except Exception as e:
+        logger.error(f"transcribe_voice error: {e}")
+        return None
+
+# ───────────────────────────────────────────
+# ОБРАБОТЧИК ГОЛОСОВЫХ
+# ───────────────────────────────────────────
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Голосовое сообщение — транскрибируем и обрабатываем как текст"""
+    if not is_polina(update):
+        return
+
+    text = await transcribe_voice(update, context)
+
+    if not text:
+        await update.message.reply_text("Не расслышал, попробуй ещё раз")
+        return
+
+    # Подменяем текст сообщения и прогоняем через обычный обработчик
+    # (создаём фейковый update с текстом для handle_message)
+    update.message.text = text
+    await handle_message(update, context)
 
 # ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
@@ -394,6 +454,9 @@ def main():
 
     # Фото
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Голосовые
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     # Текст
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
