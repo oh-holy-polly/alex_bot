@@ -1,9 +1,9 @@
 """
 evening.py — всё вечером и ночью:
-  - вечерний ритуал
-  - договор на завтра
-  - ночной вышибала
-  - воскресный дебрифинг
+- вечерний ритуал
+- договор на завтра
+- ночной вышибала
+- воскресный дебрифинг
 """
 
 import logging
@@ -24,9 +24,8 @@ from scheduler import schedule_alarms
 
 logger = logging.getLogger(__name__)
 
-KEY_EVENING_DONE       = "evening_ritual_done"
-KEY_AWAITING_TOMORROW  = "awaiting_tomorrow_time"
-
+KEY_EVENING_DONE = "evening_ritual_done"
+KEY_AWAITING_TOMORROW = "awaiting_tomorrow_time"
 
 # ───────────────────────────────────────────
 # ВЕЧЕРНИЙ РИТУАЛ
@@ -41,15 +40,15 @@ async def send_evening_ritual(app: Application):
         notion.refresh_all_caches()
 
         # Собираем данные за день
-        today_events  = notion.get_today_events()
-        habits        = notion.get_habits()
-        impulses      = notion.get_pending_impulses()
-        phase         = notion.get_cyclothymia_phase()
-        moods         = notion.get_recent_mood(days=1)
-        score         = moods[0]["score"] if moods and moods[0]["score"] else 5
+        today_events = notion.get_today_events()
+        habits = notion.get_habits()
+        impulses = notion.get_pending_impulses()
+        phase = notion.get_cyclothymia_phase()
+        moods = notion.get_recent_mood(days=1)
+        score = moods[0]["score"] if moods and moods[0]["score"] else 5
 
-        done_events   = [e["name"] for e in today_events if e.get("status") == "Выполнено"]
-        done_habits   = [h["name"] for h in habits if h["done_today"]]
+        done_events = [e["name"] for e in today_events if e.get("status") == "Выполнено"]
+        done_habits = [h["name"] for h in habits if h["done_today"]]
         missed_habits = [h["name"] for h in habits if not h["done_today"]]
 
         extra = (
@@ -71,7 +70,7 @@ async def send_evening_ritual(app: Application):
         )
 
         text = ask_alex_system(extra)
-        
+
         # Обработка возможного паттерна из системного вызова
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
@@ -80,13 +79,11 @@ async def send_evening_ritual(app: Application):
             text = text.split("PATTERN_DATA:")[0].strip()
 
         await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=text)
-
         set_state(KEY_EVENING_DONE, True)
         set_state(KEY_AWAITING_TOMORROW, True)
 
     except Exception as e:
         logger.error(f"send_evening_ritual error: {e}")
-
 
 # ───────────────────────────────────────────
 # ДОГОВОР НА ЗАВТРА
@@ -130,7 +127,6 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     await update.message.reply_text(reply)
     return True
 
-
 # ───────────────────────────────────────────
 # НОЧНОЙ ВЫШИБАЛА
 # ───────────────────────────────────────────
@@ -152,7 +148,6 @@ async def send_night_message(app: Application):
     except Exception as e:
         logger.error(f"send_night_message error: {e}")
 
-
 # ───────────────────────────────────────────
 # ВОСКРЕСНЫЙ ДЕБРИФИНГ
 # ───────────────────────────────────────────
@@ -162,26 +157,24 @@ async def send_weekly_debrief(app: Application):
     try:
         notion.refresh_all_caches()
 
-        moods    = notion.get_recent_mood(days=7)
-        habits   = notion.get_habits()
-        goals    = notion.get_active_goals()
+        # Стандартные данные за неделю
+        moods = notion.get_recent_mood(days=7)
+        habits = notion.get_habits()
+        goals = notion.get_active_goals()
         patterns = notion.get_patterns()
-        phase    = notion.get_cyclothymia_phase()
+        phase = notion.get_cyclothymia_phase()
 
-        # Считаем статистику
         scores = [m["score"] for m in moods if m["score"]]
         avg_mood = round(sum(scores) / len(scores), 1) if scores else "?"
-
         phases_this_week = list(set(m["phase"] for m in moods if m["phase"]))
 
-        done_habits   = [h["name"] for h in habits if h["done_today"]]
-        missed_habits = [h["name"] for h in habits if not h["done_today"]]
-
-        # Считаем выполненность привычек за неделю (упрощённо)
         habit_summary = ""
         for h in habits[:5]:
             last = h.get("last_done", "")
             habit_summary += f"— {h['name']}: последний раз {last or 'давно'}\n"
+
+        # Данные для анализа корреляций за 3 недели
+        correlation_data = notion.get_weekly_correlation_data(weeks=3)
 
         extra = (
             f"Воскресный дебрифинг. Данные за неделю:\n"
@@ -191,17 +184,25 @@ async def send_weekly_debrief(app: Application):
             f"Привычки:\n{habit_summary}\n"
             f"Активных целей: {len(goals)}\n"
             f"Известных паттернов: {len(patterns)}\n\n"
-            f"Проведи воскресный дебрифинг как Алекс — "
-            f"это разговор за чашкой чего-нибудь, не корпоративный отчёт. "
-            f"Отметь что было круто, что можно улучшить, "
-            f"дай один инсайт про паттерны недели. "
+            f"=== ДАННЫЕ ЗА 3 НЕДЕЛИ ДЛЯ АНАЛИЗА КОРРЕЛЯЦИЙ ===\n"
+            f"{correlation_data}\n"
+            f"=== КОНЕЦ ДАННЫХ ===\n\n"
+            f"Проанализируй данные выше и найди устойчивые корреляции — "
+            f"например: в дни когда выполнена привычка X, настроение на N баллов выше; "
+            f"или: настроение стабильно падает в определённые дни недели. "
+            f"Корреляция должна встречаться минимум 3 раза чтобы её называть.\n\n"
+            f"Проведи дебрифинг как Алекс — разговор за чашкой чего-нибудь, не отчёт. "
+            f"Если нашёл корреляцию — скажи об этом как будто сам давно заметил, "
+            f"органично, одной фразой в духе: «Кстати, заметил одну вещь...». "
+            f"Отметь что было круто на этой неделе, что можно улучшить. "
             f"В конце спроси — есть ли одна вещь которую хочет изменить на следующей неделе.\n\n"
-            f"ВАЖНО: Если анализ недели выявил новый устойчивый паттерн, "
-            f"сформулируй его и добавь техническую строку PATTERN_DATA в конец сообщения."
+            f"ВАЖНО: Если нашёл устойчивую корреляцию которой ещё нет в списке паттернов, "
+            f"добавь в конец сообщения техническую строку: "
+            f"PATTERN_DATA: Название паттерна | Триггер | Сигналы"
         )
 
         text = ask_alex_system(extra)
-        
+
         # Обработка возможного паттерна
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
@@ -212,7 +213,6 @@ async def send_weekly_debrief(app: Application):
 
     except Exception as e:
         logger.error(f"send_weekly_debrief error: {e}")
-
 
 # ───────────────────────────────────────────
 # РОУТЕР ВЕЧЕРНИХ СОСТОЯНИЙ
@@ -228,5 +228,4 @@ async def handle_evening_text(update: Update, text: str, app: Application) -> bo
         handled = await handle_tomorrow_time(update, text, app)
         if handled:
             return True
-
     return False

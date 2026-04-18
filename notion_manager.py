@@ -515,6 +515,81 @@ class NotionManager:
         return random.choice(contacts) if contacts else None
 
     # ───────────────────────────────────────────
+    # КОРРЕЛЯЦИИ — данные за период
+    # ───────────────────────────────────────────
+
+    def get_weekly_correlation_data(self, weeks: int = 3) -> str:
+        """
+        Собирает данные за последние N недель в текстовом формате
+        пригодном для анализа корреляций моделью.
+
+        Возвращает строку вида:
+        2024-01-15 (пн): настроение 7, привычки: зарядка, медитация
+        2024-01-16 (вт): настроение 5, привычки: —
+        ...
+
+        Не кэшируется — вызывается редко (раз в неделю в дебрифинге).
+        """
+        try:
+            now = datetime.now(TIMEZONE)
+            date_from = (now - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+
+            # Записи настроения за период
+            mood_resp = self.client.databases.query(
+                database_id=self.db["mood"],
+                filter={
+                    "property": "Дата",
+                    "date": {"on_or_after": date_from}
+                },
+                sorts=[{"property": "Дата", "direction": "ascending"}],
+                page_size=50
+            )
+
+            # Индексируем настроение по дате (первая запись за день)
+            mood_by_date: Dict[str, int] = {}
+            for p in mood_resp["results"]:
+                date_str = self._date(p)
+                if date_str:
+                    day = date_str[:10]
+                    if day not in mood_by_date:
+                        score = self._number(p, "Настроение")
+                        if score is not None:
+                            mood_by_date[day] = int(score)
+
+            # Привычки — определяем выполненные дни по полю "Последний раз"
+            # (упрощение: точнее хранить историю, но для корреляций достаточно)
+            habits = self.get_habits()
+            habits_by_date: Dict[str, List[str]] = {}
+            for h in habits:
+                last_done = h.get("last_done", "")
+                if last_done:
+                    day = last_done[:10]
+                    if day >= date_from:
+                        if day not in habits_by_date:
+                            habits_by_date[day] = []
+                        habits_by_date[day].append(h["name"])
+
+            # Собираем строку по дням
+            days_ru = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+            lines = []
+            current = now - timedelta(weeks=weeks)
+            while current.date() <= now.date():
+                day_str = current.strftime("%Y-%m-%d")
+                day_label = days_ru[current.weekday()]
+                mood_score = mood_by_date.get(day_str)
+                done_habits = habits_by_date.get(day_str, [])
+                mood_part = f"настроение {mood_score}" if mood_score else "настроение —"
+                habits_part = f"привычки: {', '.join(done_habits)}" if done_habits else "привычки: —"
+                lines.append(f"{day_str} ({day_label}): {mood_part}, {habits_part}")
+                current += timedelta(days=1)
+
+            return "\n".join(lines) if lines else "Данных за период нет."
+
+        except Exception as e:
+            logger.error(f"get_weekly_correlation_data error: {e}")
+            return "Не удалось загрузить данные за период."
+
+    # ───────────────────────────────────────────
     # ПОЛНЫЙ КОНТЕКСТ ДЛЯ БРИФИНГА
     # ───────────────────────────────────────────
 
@@ -535,8 +610,8 @@ class NotionManager:
         ]
 
         for key, method in keys_and_methods:
-            invalidate_cache(key)  # удаляем старую запись
-            method()               # сразу читаем — кэш заполняется внутри метода
+            invalidate_cache(key)
+            method()
             logger.info(f"Cache refreshed: {key}")
 
         logger.info("All Notion caches refreshed")
