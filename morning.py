@@ -293,7 +293,7 @@ async def send_briefing(update: Update):
         # Отправляем утреннюю картинку после брифинга
         try:
             from image_gen import send_morning_image
-            await send_morning_image(update.get_bot())
+            await send_morning_image(update.message.bot)
         except Exception as e:
             logger.error(f"send_morning_image error: {e}")
             # Картинка не критична — молча пропускаем
