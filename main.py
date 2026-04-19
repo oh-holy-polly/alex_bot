@@ -291,8 +291,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не расслышал, попробуй ещё раз")
         return
 
-    update.message.text = text
-    await handle_message(update, context)
+    await process_message(update, context, text)
 
 # ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
@@ -302,8 +301,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
 
-    user_message = update.message.text
-    hour = datetime.now(TIMEZONE).hour
+    await process_message(update, context, update.message.text)
+
+
+async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str):
+    """Общая логика для текста и голосовых"""
 
     # ── Утренние состояния (сны, настроение) ──
     from morning import handle_morning_text
