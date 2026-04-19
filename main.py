@@ -286,29 +286,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
 
-    voice = update.message.voice
-    file = await context.bot.get_file(voice.file_id)
-    
-    # Скачиваем ogg
-    ogg_path = f"/tmp/{voice.file_id}.ogg"
-    mp3_path = f"/tmp/{voice.file_id}.mp3"
-    await file.download_to_drive(ogg_path)
-    
-    # Конвертируем через ffmpeg
-    import subprocess
-    subprocess.run(["ffmpeg", "-i", ogg_path, mp3_path, "-y"], check=True)
-    
-    # Транскрибируем через Groq Whisper
-    with open(mp3_path, "rb") as audio_file:
-        transcription = groq_client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=audio_file,
-            language="ru"
-        )
-    
-    text = transcription.text
-    reply = ask_alex(f"[Голосовое]: {text}")
-    await update.message.reply_text(reply)
+    text = await transcribe_voice(update, context)
+    if not text:
+        await update.message.reply_text("Не расслышал, попробуй ещё раз")
+        return
+
+    update.message.text = text
+    await handle_message(update, context)
 
 # ───────────────────────────────────────────
 # ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ
