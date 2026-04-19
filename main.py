@@ -21,6 +21,7 @@ from cache import (
 )
 from alex import ask_alex, ask_alex_system
 from notion_manager import notion
+from intent_router import route_message  # FIX: подключаем умный роутер
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -386,8 +387,15 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         from day import suggest_event
         await suggest_event(update, context)
 
-    else:  # "chat"
-        reply = ask_alex(user_message)
+    else:  # "chat" — FIX: пробуем intent_router для Notion-действий
+        needs_clarification, action_results = route_message(user_message)
+        if action_results:
+            # Роутер что-то сделал — передаём результат Алексу как контекст
+            extra = "\n".join(action_results)
+            reply = ask_alex(user_message, extra_instruction=extra)
+        else:
+            # Просто разговор
+            reply = ask_alex(user_message)
         await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────

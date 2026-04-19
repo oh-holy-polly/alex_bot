@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from groq import Groq
-from config import GROQ_API_KEY, MODEL_SMART, TIMEZONE
+from config import GROQ_API_KEY, MODEL_FAST, MODEL_SMART, TIMEZONE
 from notion_manager import notion
 
 logger = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ def classify_intent(user_message: str) -> list[dict]:
 
     try:
         response = groq_client.chat.completions.create(
-            model=MODEL_SMART,
+            model=MODEL_FAST,  # FIX: 8b для классификации, экономим токены 70b
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_message}
@@ -300,7 +300,6 @@ def _do_create_event(args: dict) -> str:
     time = args.get("time")
     category = args.get("category", "")
 
-    # Собираем дату+время в ISO формат если есть
     date_iso = None
     if date:
         if time:
@@ -328,7 +327,6 @@ def _do_create_event(args: dict) -> str:
 def _do_update_event(args: dict) -> str:
     search_name = args.get("search_name", "")
 
-    # Ищем событие по названию
     try:
         resp = notion.client.databases.query(
             database_id=notion.db["events"],
@@ -350,7 +348,6 @@ def _do_update_event(args: dict) -> str:
         names = [notion._title(p) for p in pages]
         return f"NOTION_CLARIFY: нашла несколько похожих событий: {', '.join(names)} — спроси у Полины какое именно"
 
-    # Ровно одно — обновляем
     page_id = pages[0]["id"]
     real_name = notion._title(pages[0])
     props = {}
@@ -365,7 +362,6 @@ def _do_update_event(args: dict) -> str:
         elif new_date:
             date_iso = new_date
         else:
-            # Только время — берём дату из текущей записи
             existing = notion._date(pages[0])
             base_date = existing[:10] if existing else datetime.now(TIMEZONE).strftime("%Y-%m-%d")
             date_iso = f"{base_date}T{new_time}:00"
@@ -379,8 +375,8 @@ def _do_update_event(args: dict) -> str:
 
     try:
         notion.client.pages.update(page_id=page_id, properties=props)
-        from cache import set_cache
-        set_cache("today_events", None)
+        from cache import invalidate_cache
+        invalidate_cache("today_events")
         return f"NOTION_ACTION: обновила «{real_name}»"
     except Exception as e:
         logger.error(f"update_event error: {e}")
@@ -415,10 +411,9 @@ def _do_delete_event(args: dict) -> str:
     real_name = notion._title(pages[0])
 
     try:
-        # В Notion нет удаления через API — архивируем (это стандартная практика)
         notion.client.pages.update(page_id=page_id, archived=True)
-        from cache import set_cache
-        set_cache("today_events", None)
+        from cache import invalidate_cache
+        invalidate_cache("today_events")
         return f"NOTION_ACTION: удалила «{real_name}»"
     except Exception as e:
         logger.error(f"delete_event error: {e}")
