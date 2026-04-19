@@ -33,11 +33,12 @@ PHOTO_TASKS = [
 ]
 
 # Ключи состояния утра
-KEY_PHOTO_TASK    = "morning_photo_task"
-KEY_PHOTO_DONE    = "morning_photo_done"
+KEY_PHOTO_TASK      = "morning_photo_task"
+KEY_PHOTO_DONE      = "morning_photo_done"
 KEY_AWAITING_DREAMS = "awaiting_dreams"
 KEY_AWAITING_MOOD   = "awaiting_morning_mood"
 KEY_BRIEFING_DONE   = "morning_briefing_done"
+KEY_ALARM_SENT      = "morning_alarm_sent"  # FIX: флаг что будильник был отправлен
 
 # ───────────────────────────────────────────
 # БУДИЛЬНИКИ
@@ -55,6 +56,9 @@ async def send_alarm(app: Application, attempt: int):
             set_state(KEY_BRIEFING_DONE, False)
             set_night_mode(False)
 
+        # FIX: помечаем что будильник был отправлен — ждём ответа
+        set_state(KEY_ALARM_SENT, True)
+
         instruction = (
             f"Это будильник номер {attempt} из трёх. "
             f"{'Первый — мягко, Полина только просыпается.' if attempt == 1 else ''}"
@@ -67,8 +71,9 @@ async def send_alarm(app: Application, attempt: int):
         text = ask_alex_system(instruction)
         await app.bot.send_message(chat_id=USER_TELEGRAM_ID, text=text)
 
-        # После третьего будильника — сразу фото-задание
+        # После третьего будильника — сразу фото-задание (без ожидания ответа)
         if attempt == 3:
+            set_state(KEY_ALARM_SENT, False)
             await send_photo_task(app)
 
     except Exception as e:
@@ -100,6 +105,7 @@ async def handle_awake(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полина написала /awake — она проснулась"""
     set_state(KEY_PHOTO_DONE, False)
     set_state(KEY_BRIEFING_DONE, False)
+    set_state(KEY_ALARM_SENT, False)
     set_night_mode(False)
 
     # Отправляем фото-задание
@@ -341,6 +347,21 @@ async def handle_morning_text(update: Update, text: str) -> bool:
     Перехватывает текстовые сообщения если идёт утренний ритуал.
     Возвращает True если сообщение обработано, False если нет.
     """
+    # FIX: если будильник был отправлен и Полина что-то написала —
+    # воспринимаем как подтверждение пробуждения, сразу запрашиваем фото
+    if get_state(KEY_ALARM_SENT, False):
+        set_state(KEY_ALARM_SENT, False)
+        task = random.choice(PHOTO_TASKS)
+        set_state(KEY_PHOTO_TASK, task[0])
+
+        reply = ask_alex_system(
+            f"Полина ответила на будильник: «{text}». "
+            f"Отреагируй скептически — типа 'да? докажи' — и сразу попроси прислать фото {task[0]}. "
+            f"Одним коротким сообщением, с характером."
+        )
+        await update.message.reply_text(reply)
+        return True
+
     if get_state(KEY_AWAITING_DREAMS, False):
         await handle_dreams_response(update, text)
         return True

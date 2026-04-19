@@ -21,7 +21,7 @@ from cache import (
 )
 from alex import ask_alex, ask_alex_system
 from notion_manager import notion
-from intent_router import route_message  # FIX: подключаем умный роутер
+from intent_router import route_message
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -162,7 +162,6 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         force_smart=False
     )
     await update.message.reply_text(reply)
-    # Награды
     from rewards import send_rewards
     await send_rewards(task.get('name', ''), context.application, USER_TELEGRAM_ID)
 
@@ -197,8 +196,6 @@ def detect_intent(msg: str) -> str:
     """
     m = msg.lower()
 
-    # ── УРОВЕНЬ 1: самые специфичные (составные фразы) ──
-
     if _contains(m, ["добавь привычку", "новая привычка", "хочу добавить привычку"]):
         return "add_habit"
 
@@ -216,24 +213,16 @@ def detect_intent(msg: str) -> str:
     if _contains(m, ["куда пойти", "что делать вечером", "хочу выйти куда-нибудь"]):
         return "suggest_event"
 
-    # ── УРОВЕНЬ 2: завершение задачи ──
-
     if _contains(m, ["готово", "сделала", "закончила", "выполнила", "done"]):
         if get_active_task():
             return "task_done"
 
-    # ── УРОВЕНЬ 3: начало задачи ──
-
     if _contains(m, ["начала", "начинаю", "сажусь за", "берусь за", "начну"]):
         return "task_start"
-
-    # ── УРОВЕНЬ 4: застряла ──
 
     if _contains(m, ["затупила", "застряла", "не начала", "не могу начать",
                      "не могу приступить", "завис", "зависла"]):
         return "stuck"
-
-    # ── УРОВЕНЬ 5: скучно ──
 
     if _contains(m, ["скучно", "не знаю чем заняться"]):
         return "suggest_event"
@@ -245,10 +234,6 @@ def detect_intent(msg: str) -> str:
 # ───────────────────────────────────────────
 
 async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str | None:
-    """
-    Скачивает голосовое сообщение и транскрибирует через Groq Whisper.
-    Возвращает текст или None если не удалось.
-    """
     try:
         from groq import Groq
         from config import GROQ_API_KEY
@@ -256,13 +241,11 @@ async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         voice = update.message.voice
         file = await context.bot.get_file(voice.file_id)
 
-        # Скачиваем во временный файл
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             tmp_path = tmp.name
 
         await file.download_to_drive(tmp_path)
 
-        # Транскрибируем через Whisper
         client = Groq(api_key=GROQ_API_KEY)
         with open(tmp_path, "rb") as audio_file:
             transcription = client.audio.transcriptions.create(
@@ -272,7 +255,7 @@ async def transcribe_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 response_format="text"
             )
 
-        os.unlink(tmp_path)  # удаляем временный файл
+        os.unlink(tmp_path)
 
         text = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
         logger.info(f"Voice transcribed: {text[:50]}...")
@@ -304,7 +287,6 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
         return
-
     await process_message(update, context, update.message.text)
 
 
@@ -341,7 +323,10 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     intent = detect_intent(user_message)
 
     if intent == "task_start":
-        await _handle_task_start(update, user_message)
+        # FIX: start_task_cycle записывает KEY_TASK_CHECK_TIME — теперь Алекс
+        # реально заглянет через обещанное время
+        from day import start_task_cycle
+        await start_task_cycle(update, user_message)
 
     elif intent == "task_done":
         task = get_active_task()
@@ -351,7 +336,6 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
             force_smart=False
         )
         await update.message.reply_text(reply)
-        # Награды
         from rewards import send_rewards
         await send_rewards(task.get('name', ''), context.application, USER_TELEGRAM_ID)
 
@@ -372,7 +356,6 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     elif intent == "habit_done":
         from habits import handle_habit_done
         await handle_habit_done(update, user_message)
-        # Награды за привычку
         from rewards import send_rewards
         await send_rewards(user_message, context.application, USER_TELEGRAM_ID)
 
@@ -387,35 +370,18 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
         from day import suggest_event
         await suggest_event(update, context)
 
-    else:  # "chat" — FIX: пробуем intent_router для Notion-действий
+    else:  # "chat" — intent_router для Notion-действий
         needs_clarification, action_results = route_message(user_message)
         if action_results:
-            # Роутер что-то сделал — передаём результат Алексу как контекст
             extra = "\n".join(action_results)
             reply = ask_alex(user_message, extra_instruction=extra)
         else:
-            # Просто разговор
             reply = ask_alex(user_message)
         await update.message.reply_text(reply)
 
 # ───────────────────────────────────────────
 # ВСПОМОГАТЕЛЬНЫЕ ОБРАБОТЧИКИ
 # ───────────────────────────────────────────
-
-async def _handle_task_start(update: Update, user_message: str):
-    """Полина начинает задачу — запускаем цикл коучинга"""
-    reply = ask_alex(
-        f"Полина говорит: «{user_message}». "
-        f"Она начинает задачу. Зафиксируй это, оцени примерно сколько времени займёт "
-        f"на основе контекста, скажи когда заглянешь проверить. "
-        f"Коротко и по-человечески.",
-        force_smart=True
-    )
-    set_active_task({
-        "name": user_message,
-        "started_at": datetime.now(TIMEZONE).strftime("%H:%M")
-    })
-    await update.message.reply_text(reply)
 
 async def _handle_add_habit(update: Update, user_message: str):
     """Добавляем привычку через диалог"""
@@ -456,7 +422,6 @@ def main():
     init_db()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # Команды
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("awake", cmd_awake))
     app.add_handler(CommandHandler("mood", cmd_mood))
@@ -467,16 +432,10 @@ def main():
     app.add_handler(CommandHandler("done", cmd_done))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    # Фото
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
-    # Голосовые
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
-
-    # Текст
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Планировщик
     from scheduler import setup_scheduler
     setup_scheduler(app)
 
