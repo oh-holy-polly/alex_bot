@@ -161,6 +161,9 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         force_smart=False
     )
     await update.message.reply_text(reply)
+    # Награды
+    from rewards import send_rewards
+    await send_rewards(task.get('name', ''), context.application, USER_TELEGRAM_ID)
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_polina(update):
@@ -347,6 +350,9 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
             force_smart=False
         )
         await update.message.reply_text(reply)
+        # Награды
+        from rewards import send_rewards
+        await send_rewards(task.get('name', ''), context.application, USER_TELEGRAM_ID)
 
     elif intent == "stuck":
         task = get_active_task()
@@ -365,6 +371,9 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE, us
     elif intent == "habit_done":
         from habits import handle_habit_done
         await handle_habit_done(update, user_message)
+        # Награды за привычку
+        from rewards import send_rewards
+        await send_rewards(user_message, context.application, USER_TELEGRAM_ID)
 
     elif intent == "new_pattern":
         from habits import handle_new_pattern
