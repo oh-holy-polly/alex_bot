@@ -111,17 +111,15 @@ def generate_morning_phrase(phase: str, score: int, cycle_phase: str) -> str:
 def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
     """Накладывает текст сверху на фото"""
 
-    # Открываем и ресайзим фото под 800×1000
     img = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
     img = img.resize((IMG_WIDTH, IMG_HEIGHT), Image.LANCZOS)
 
     draw = ImageDraw.Draw(img)
 
-    # ── Тёмный градиент сверху чтобы текст читался ──
+    # Тёмный градиент сверху чтобы текст читался
     gradient = Image.new("RGBA", (IMG_WIDTH, IMG_HEIGHT // 2), (0, 0, 0, 0))
     grad_draw = ImageDraw.Draw(gradient)
     for y in range(IMG_HEIGHT // 2):
-        # от alpha=180 сверху до 0 внизу
         alpha = int(180 * (1 - y / (IMG_HEIGHT // 2)))
         grad_draw.line([(0, y), (IMG_WIDTH, y)], fill=(0, 0, 0, alpha))
 
@@ -130,7 +128,7 @@ def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
     img = img.convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    # ── Шрифт ──
+    # Шрифт
     font_size = 110
     try:
         font = ImageFont.truetype(FONT_PATH, font_size)
@@ -138,7 +136,7 @@ def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
         logger.warning("DejaVu не найден, использую дефолтный шрифт")
         font = ImageFont.load_default()
 
-    # ── Разбиваем фразу на слова, каждое слово — отдельная строка (стиль первой картинки) ──
+    # Разбиваем фразу на слова, каждое слово — отдельная строка
     words = phrase.upper().split()
 
     # Подбираем размер шрифта чтобы самое длинное слово влезало
@@ -150,7 +148,7 @@ def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
             break
         bbox = draw.textbbox((0, 0), max_word, font=font)
         word_width = bbox[2] - bbox[0]
-        if word_width <= IMG_WIDTH - 80:  # отступ 40px с каждой стороны
+        if word_width <= IMG_WIDTH - 80:
             break
         font_size -= 5
 
@@ -158,7 +156,7 @@ def render_image(photo_bytes: bytes, phrase: str) -> Image.Image:
     bbox = draw.textbbox((0, 0), "A", font=font)
     line_height = (bbox[3] - bbox[1]) + 10
 
-    # Рисуем слова сверху вниз, начиная с отступа 50px
+    # Рисуем слова сверху вниз
     y = 50
     for word in words:
         draw.text((40, y), word, font=font, fill="white")
@@ -176,31 +174,24 @@ async def generate_morning_image() -> str | None:
     Возвращает путь к файлу или None если что-то пошло не так.
     """
     try:
-        # Контекст
         phase = notion.get_cyclothymia_phase()
         moods = notion.get_recent_mood(days=1)
         score = moods[0]["score"] if moods and moods[0]["score"] else 5
         cycle = notion.get_cycle_phase()
         cycle_phase = cycle.get("phase", "")
 
-        # Стиль (иногда случайный для сюрприза — 20% шанс)
         style = PHASE_TO_STYLE.get(phase, "кинематографичный")
         if random.random() < 0.2:
             style = random.choice(list(MOOD_QUERIES.keys()))
 
-        # Фото
         query = random.choice(MOOD_QUERIES[style])
         photo_bytes = get_unsplash_photo(query)
         if not photo_bytes:
             return None
 
-        # Фраза
         phrase = generate_morning_phrase(phase, score, cycle_phase)
-
-        # Рендер
         img = render_image(photo_bytes, phrase)
 
-        # Сохраняем
         now = datetime.now(TIMEZONE)
         output_path = os.path.join(OUTPUT_DIR, f"morning_{now.strftime('%Y%m%d_%H%M')}.jpg")
         img.save(output_path, "JPEG", quality=92)
@@ -213,17 +204,19 @@ async def generate_morning_image() -> str | None:
         return None
 
 
-async def send_morning_image(app) -> bool:
+async def send_morning_image(message) -> bool:
     """
     Генерирует и отправляет утреннюю картинку.
-    Возвращает True если отправила, False если нет (тогда caller отправит текст).
+    FIX: принимает message (объект сообщения) вместо app/bot —
+    это согласуется с вызовом из morning.py.
+    Возвращает True если отправила, False если нет.
     """
     from config import USER_TELEGRAM_ID
     try:
         image_path = await generate_morning_image()
         if image_path and os.path.exists(image_path):
             with open(image_path, "rb") as f:
-                await app.bot.send_photo(chat_id=USER_TELEGRAM_ID, photo=f)
+                await message.bot.send_photo(chat_id=USER_TELEGRAM_ID, photo=f)
             os.remove(image_path)
             return True
         return False
