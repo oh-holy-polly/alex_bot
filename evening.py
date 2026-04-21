@@ -18,7 +18,7 @@ from cache import (
     set_wake_time, set_night_mode,
     get_day_mode
 )
-from alex import ask_alex, ask_alex_system
+from alex import ask_alex, ask_alex_system, ask_alex_smart  # FIX: добавлен импорт ask_alex_smart
 from notion_manager import notion
 from scheduler import schedule_alarms
 
@@ -64,11 +64,14 @@ async def send_evening_ritual(app: Application):
             f"4. Микроплан на завтра — одно главное дело\n"
             f"5. В конце спроси во сколько завтра вставать\n\n"
             f"Всё это одним живым сообщением. Не списком.\n\n"
-            f"ВАЖНО: Если ты заметил в данных за день четкую связь (например, пропуск привычки -> низкое настроение), "
-            f"сформулируй это как новый паттерн и включи техническую строку PATTERN_DATA в конец сообщения."
+            f"ВАЖНО: Пиши только о том что есть в данных выше. "
+            f"Не выдумывай корреляции и паттерны если данных меньше 2 недель — просто не упоминай их. "
+            f"Если заметил чёткую связь в данных за сегодня (например, пропуск привычки -> низкое настроение), "
+            f"сформулируй как паттерн и добавь строку PATTERN_DATA в конец."
         )
 
-        text = ask_alex_system(extra)
+        # FIX: вечерний ритуал на 70b — сложная задача требует умной модели
+        text = ask_alex_smart(extra)
 
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
@@ -112,7 +115,8 @@ async def handle_tomorrow_time(update: Update, text: str, app: Application) -> b
     set_state(KEY_AWAITING_TOMORROW, False)
     schedule_alarms(app)
 
-    reply = ask_alex_system(
+    # FIX: подтверждение будильника на 70b — важный момент конца дня
+    reply = ask_alex_smart(
         f"Полина сказала что завтра встаёт в {hour}:{minute:02d}. "
         f"Подтверди что поставил будильник — коротко. "
         f"Потом скажи что уходишь и намекни что пора ложиться."
@@ -130,6 +134,7 @@ async def send_night_message(app: Application):
         set_night_mode(True)
         set_state(KEY_EVENING_DONE, False)  # сброс для следующего дня
 
+        # Ночной вышибала остаётся на 8b — короткое скучное сообщение, сложность не нужна
         text = ask_alex_system(
             "Сейчас полночь. Ты ночной вышибала. "
             "Отправь одно короткое сообщение — пора спать. "
@@ -165,7 +170,6 @@ async def send_weekly_debrief(app: Application):
             last = h.get("last_done", "")
             habit_summary += f"— {h['name']}: последний раз {last or 'давно'}\n"
 
-        # Данные за 3 недели для анализа корреляций
         correlation_data = notion.get_weekly_correlation_data(weeks=3)
 
         extra = (
@@ -182,10 +186,10 @@ async def send_weekly_debrief(app: Application):
             f"Проанализируй данные выше и найди устойчивые корреляции — "
             f"например: в дни когда выполнена привычка X, настроение на N баллов выше; "
             f"или: настроение стабильно падает в определённые дни недели. "
-            f"Корреляция должна встречаться минимум 3 раза чтобы её называть.\n\n"
+            f"Корреляция должна встречаться минимум 3 раза чтобы её называть. "
+            f"Если данных меньше 2 недель — не выдумывай корреляции, просто не упоминай их.\n\n"
             f"Проведи дебрифинг как Алекс — разговор за чашкой чего-нибудь, не отчёт. "
-            f"Если нашёл корреляцию — скажи об этом как будто сам давно заметил, "
-            f"органично, одной фразой в духе: «Кстати, заметил одну вещь...». "
+            f"Если нашёл корреляцию — скажи органично, одной фразой: «Кстати, заметил одну вещь...». "
             f"Отметь что было круто на этой неделе, что можно улучшить. "
             f"В конце спроси — есть ли одна вещь которую хочет изменить на следующей неделе.\n\n"
             f"ВАЖНО: Если нашёл устойчивую корреляцию которой ещё нет в списке паттернов, "
@@ -193,7 +197,8 @@ async def send_weekly_debrief(app: Application):
             f"PATTERN_DATA: Название паттерна | Триггер | Сигналы"
         )
 
-        text = ask_alex_system(extra)
+        # FIX: воскресный дебрифинг на 70b
+        text = ask_alex_smart(extra)
 
         if "PATTERN_DATA:" in text:
             from habits import handle_new_pattern_from_text
